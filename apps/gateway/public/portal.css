@@ -1,0 +1,147 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: #f4f8fc;
+  color: #0d2235;
+}
+
+.page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.hero,
+.panel {
+  border: 1px solid #c4d6e5;
+  background: #fff;
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.hero p {
+  margin: 8px 0 0;
+  color: #506b80;
+}
+
+.user-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.logout {
+  color: #0f6fb2;
+  text-decoration: none;
+}
+
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 20px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  border: 1px solid #b8d0e4;
+  border-radius: 12px;
+  padding: 14px;
+  text-decoration: none;
+  color: inherit;
+  background: linear-gradient(145deg, #fff, #edf6ff);
+}
+
+.card h3 {
+  margin: 0 0 8px;
+}
+
+.card p {
+  margin: 0;
+  color: #5b7588;
+  font-size: 14px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+button {
+  border: 1px solid #8fb2cc;
+  border-radius: 9px;
+  height: 36px;
+  padding: 0 14px;
+  background: #eaf4ff;
+  color: #0d3b5c;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.status {
+  margin-top: 10px;
+  min-height: 24px;
+  font-size: 14px;
+  color: #425e72;
+  white-space: pre-wrap;
+}
+
+.status.ok {
+  color: #13643f;
+}
+
+.status.bad {
+  color: #a33434;
+}
+
+.job-log {
+  margin: 10px 0 0;
+  max-height: 340px;
+  overflow: auto;
+  border: 1px solid #d2deea;
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (max-width: 760px) {
+  .hero {
+    flex-direction: column;
+  }
+}

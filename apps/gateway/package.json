@@ -1,0 +1,24 @@
+{
+  "name": "ecom-dashboard-report",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SQL-driven weekly report web service",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "web:dev": "npm --prefix ../web run dev",
+    "web:build": "npm --prefix ../web run build",
+    "web:preview": "npm --prefix ../web run preview",
+    "build": "npm run web:build"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "openai": "^5.23.2",
+    "pg": "^8.20.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
+  }
+}

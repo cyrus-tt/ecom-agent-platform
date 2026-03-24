@@ -1,0 +1,449 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>周报主表</title>
+  <style>
+    :root {
+      --bg: #f7f8fa;
+      --card: #ffffff;
+      --line: #d9dde5;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #0f766e;
+      --accent-soft: #e6fffb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .page {
+      padding: 16px;
+    }
+    .title {
+      margin: 0 0 12px;
+      font-size: 22px;
+      font-weight: 700;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .toolbar label {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .toolbar select,
+    .toolbar input,
+    .toolbar button {
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      padding: 0 10px;
+      font-size: 13px;
+    }
+    .toolbar input {
+      width: 240px;
+    }
+    .toolbar button {
+      cursor: pointer;
+    }
+    .toolbar .primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+    .meta {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      color: var(--muted);
+      display: grid;
+      gap: 4px;
+    }
+    .gap-warn {
+      color: #92400e;
+      background: #fffbeb;
+      border-radius: 6px;
+      padding: 4px 8px;
+      width: fit-content;
+    }
+    .table-wrap {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: auto;
+      max-height: 70vh;
+    }
+    table {
+      border-collapse: collapse;
+      width: max-content;
+      min-width: 100%;
+      font-size: 12px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 6px 8px;
+      white-space: nowrap;
+      text-align: center;
+    }
+    thead tr:nth-child(1) th {
+      background: #eef6ff;
+      font-weight: 700;
+      position: sticky;
+      top: 0;
+      z-index: 3;
+    }
+    thead tr:nth-child(2) th {
+      background: #f8fafc;
+      font-weight: 600;
+      position: sticky;
+      top: 31px;
+      z-index: 2;
+    }
+    tbody tr:nth-child(even) {
+      background: #fcfdff;
+    }
+    .pagination {
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .pagination button {
+      height: 30px;
+      min-width: 70px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .loading {
+      padding: 14px;
+      font-size: 13px;
+      color: var(--muted);
+      background: var(--accent-soft);
+      border: 1px solid #99f6e4;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1 class="title">周报主表</h1>
+
+    <div class="loading" id="loading">正在加载...</div>
+
+    <div class="toolbar">
+      <label for="weekSelect">周次</label>
+      <select id="weekSelect"></select>
+
+      <label for="keywordInput">货号/款号</label>
+      <input id="keywordInput" placeholder="输入货号或款号关键词">
+      <button id="searchBtn">搜索</button>
+      <button id="resetBtn">重置</button>
+
+      <label for="pageSizeSelect">每页</label>
+      <select id="pageSizeSelect">
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+        <option value="200">200</option>
+      </select>
+
+      <button class="primary" id="exportBtn">导出所选周全量Excel</button>
+      <button class="primary" id="gapTemplateBtn">导出缺口填写模板</button>
+    </div>
+
+    <div class="meta">
+      <div id="metaLine">-</div>
+      <div id="gapLine">-</div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="reportTable">
+        <thead id="tableHead"></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="pagination">
+      <button id="prevBtn">上一页</button>
+      <button id="nextBtn">下一页</button>
+      <span id="pageInfo">-</span>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      weeks: [],
+      week: "",
+      page: 1,
+      pageSize: 50,
+      keyword: "",
+      total: 0,
+      meta: null,
+      metaWeek: "",
+      rows: [],
+    };
+
+    const els = {
+      loading: document.getElementById("loading"),
+      weekSelect: document.getElementById("weekSelect"),
+      keywordInput: document.getElementById("keywordInput"),
+      searchBtn: document.getElementById("searchBtn"),
+      resetBtn: document.getElementById("resetBtn"),
+      pageSizeSelect: document.getElementById("pageSizeSelect"),
+      exportBtn: document.getElementById("exportBtn"),
+      gapTemplateBtn: document.getElementById("gapTemplateBtn"),
+      tableHead: document.getElementById("tableHead"),
+      tableBody: document.getElementById("tableBody"),
+      metaLine: document.getElementById("metaLine"),
+      gapLine: document.getElementById("gapLine"),
+      prevBtn: document.getElementById("prevBtn"),
+      nextBtn: document.getElementById("nextBtn"),
+      pageInfo: document.getElementById("pageInfo"),
+    };
+
+    function setLoading(loading) {
+      els.loading.style.display = loading ? "block" : "none";
+    }
+
+    function api(path) {
+      return fetch(path).then(async (res) => {
+        const data = await res.json();
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.message || "请求失败");
+        }
+        return data;
+      });
+    }
+
+    function formatValue(value, index) {
+      if (value === null || value === undefined || value === "") {
+        return "";
+      }
+      if (typeof value !== "number") {
+        return String(value);
+      }
+      if (index >= 59) {
+        return value.toFixed(4);
+      }
+      if (Math.abs(value - Math.round(value)) < 1e-9) {
+        return String(Math.round(value));
+      }
+      return value.toFixed(2);
+    }
+
+    function renderHead(groupHeaders, columnHeaders) {
+      const tr1 = document.createElement("tr");
+      groupHeaders.forEach((v) => {
+        const th = document.createElement("th");
+        th.textContent = v || "";
+        tr1.appendChild(th);
+      });
+
+      const tr2 = document.createElement("tr");
+      columnHeaders.forEach((v) => {
+        const th = document.createElement("th");
+        th.textContent = v || "";
+        tr2.appendChild(th);
+      });
+
+      els.tableHead.innerHTML = "";
+      els.tableHead.appendChild(tr1);
+      els.tableHead.appendChild(tr2);
+    }
+
+    function renderRows(items) {
+      els.tableBody.innerHTML = "";
+      if (!items.length) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 95;
+        td.textContent = "当前条件无数据";
+        tr.appendChild(td);
+        els.tableBody.appendChild(tr);
+        return;
+      }
+      items.forEach((row) => {
+        const tr = document.createElement("tr");
+        row.forEach((cell, idx) => {
+          const td = document.createElement("td");
+          td.textContent = formatValue(cell, idx);
+          tr.appendChild(td);
+        });
+        els.tableBody.appendChild(tr);
+      });
+    }
+
+    function renderMeta() {
+      if (!state.meta) {
+        els.metaLine.textContent = "-";
+        els.gapLine.textContent = "-";
+        return;
+      }
+      const m = state.meta;
+      els.metaLine.textContent = `周次: ${state.week} | 行数: ${m.row_count} | 生成时间: ${m.generated_at || "-"}`;
+      const gap = m.gap_summary || {};
+      const text = `缺口摘要: 门店渠道 ${gap.missing_store_channel || 0} / 分配池渠道 ${gap.missing_pool_channel || 0} / 分配池比例 ${gap.missing_pool_ratio || 0} / 库存未知渠道 ${gap.unknown_inventory_channel || 0} / 销售未知渠道 ${gap.unknown_sales_channel || 0}`;
+      els.gapLine.textContent = text;
+      els.gapLine.className = "gap-warn";
+    }
+
+    function renderPageInfo() {
+      const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
+      els.pageInfo.textContent = `第 ${state.page} / ${totalPages} 页，共 ${state.total} 行`;
+      els.prevBtn.disabled = state.page <= 1;
+      els.nextBtn.disabled = state.page >= totalPages;
+    }
+
+    async function loadWeeks() {
+      const data = await api("/api/report/weeks");
+      state.weeks = data.weeks || [];
+      state.week = data.default_week || "";
+      els.weekSelect.innerHTML = "";
+      state.weeks.forEach((week) => {
+        const option = document.createElement("option");
+        option.value = week;
+        option.textContent = week;
+        if (week === state.week) {
+          option.selected = true;
+        }
+        els.weekSelect.appendChild(option);
+      });
+    }
+
+    async function loadMetaAndRows() {
+      if (!state.week) {
+        return;
+      }
+      setLoading(true);
+      try {
+        const weekQ = encodeURIComponent(state.week);
+        const keywordQ = encodeURIComponent(state.keyword);
+        let meta = state.meta;
+        const needMeta = !meta || state.metaWeek !== state.week;
+        if (needMeta) {
+          meta = await api(`/api/report/meta?week=${weekQ}`);
+          state.meta = meta;
+          state.metaWeek = state.week;
+        }
+        const rows = await api(
+          `/api/report/rows?week=${weekQ}&page=${state.page}&pageSize=${state.pageSize}&keyword=${keywordQ}`
+        );
+        state.rows = rows.items || [];
+        state.total = rows.total || 0;
+        renderHead(meta.group_headers || [], meta.column_headers || []);
+        renderRows(state.rows);
+        renderMeta();
+        renderPageInfo();
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function bindEvents() {
+      els.weekSelect.addEventListener("change", () => {
+        state.week = els.weekSelect.value;
+        state.page = 1;
+        loadMetaAndRows().catch((err) => alert(err.message));
+      });
+
+      els.searchBtn.addEventListener("click", () => {
+        state.keyword = els.keywordInput.value.trim();
+        state.page = 1;
+        loadMetaAndRows().catch((err) => alert(err.message));
+      });
+
+      els.keywordInput.addEventListener("keydown", (evt) => {
+        if (evt.key === "Enter") {
+          state.keyword = els.keywordInput.value.trim();
+          state.page = 1;
+          loadMetaAndRows().catch((err) => alert(err.message));
+        }
+      });
+
+      els.resetBtn.addEventListener("click", () => {
+        els.keywordInput.value = "";
+        state.keyword = "";
+        state.page = 1;
+        loadMetaAndRows().catch((err) => alert(err.message));
+      });
+
+      els.pageSizeSelect.addEventListener("change", () => {
+        state.pageSize = Number(els.pageSizeSelect.value) || 50;
+        state.page = 1;
+        loadMetaAndRows().catch((err) => alert(err.message));
+      });
+
+      els.prevBtn.addEventListener("click", () => {
+        if (state.page <= 1) {
+          return;
+        }
+        state.page -= 1;
+        loadMetaAndRows().catch((err) => alert(err.message));
+      });
+
+      els.nextBtn.addEventListener("click", () => {
+        const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
+        if (state.page >= totalPages) {
+          return;
+        }
+        state.page += 1;
+        loadMetaAndRows().catch((err) => alert(err.message));
+      });
+
+      els.exportBtn.addEventListener("click", () => {
+        if (!state.week) {
+          return;
+        }
+        const weekQ = encodeURIComponent(state.week);
+        window.open(`/api/report/export.xlsx?week=${weekQ}`, "_blank");
+      });
+
+      els.gapTemplateBtn.addEventListener("click", () => {
+        if (!state.week) {
+          return;
+        }
+        const weekQ = encodeURIComponent(state.week);
+        window.open(`/api/report/gap-template.xlsx?week=${weekQ}`, "_blank");
+      });
+    }
+
+    async function init() {
+      setLoading(true);
+      try {
+        await loadWeeks();
+        bindEvents();
+        await loadMetaAndRows();
+      } catch (err) {
+        alert(err.message || String(err));
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

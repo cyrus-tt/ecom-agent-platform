@@ -1,0 +1,60 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>日报主表</title>
+  <link rel="stylesheet" href="/daily.css">
+</head>
+<body>
+  <div class="page">
+    <h1 class="title">日报主表</h1>
+
+    <div class="loading" id="loading">正在加载...</div>
+
+    <div class="toolbar">
+      <label for="dateFromInput">销售日期从</label>
+      <input id="dateFromInput" type="date">
+
+      <label for="dateToInput">到</label>
+      <input id="dateToInput" type="date">
+
+      <label for="keywordInput">货号/款号</label>
+      <input id="keywordInput" placeholder="输入货号或款号关键字">
+
+      <button id="searchBtn" type="button">查询</button>
+      <button id="resetBtn" type="button">重置</button>
+
+      <label for="pageSizeSelect">每页</label>
+      <select id="pageSizeSelect">
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+        <option value="200">200</option>
+      </select>
+
+      <button class="primary" id="exportBtn" type="button">导出当前区间 Excel（小体积）</button>
+      <a class="link-btn" href="/">返回门户</a>
+    </div>
+
+    <div class="meta">
+      <div id="metaLine">-</div>
+      <div id="gapLine">-</div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="reportTable">
+        <thead id="tableHead"></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="pagination">
+      <button id="prevBtn" type="button">上一页</button>
+      <button id="nextBtn" type="button">下一页</button>
+      <span id="pageInfo">-</span>
+    </div>
+  </div>
+
+  <script src="/daily.js"></script>
+</body>
+</html>

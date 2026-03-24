@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+client/dist/
+
+# Runtime/cache
+runtime/
+__pycache__/
+*.py[cod]
+
+# Env/local settings
+.env
+.env.*
+!.env.example
+config/auth.local.json
+*.log
+
+# Local business data exports (sensitive/large)
+*.csv
+*.xlsx

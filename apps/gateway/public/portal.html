@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>电商统一门户</title>
+  <link rel="stylesheet" href="/portal.css">
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div>
+        <h1>电商数据统一门户</h1>
+        <p>一个入口访问日报主表、新品入库看板与运维任务。</p>
+      </div>
+      <div class="user-box">
+        <span>当前账号：</span>
+        <strong id="currentUser">-</strong>
+        <a href="/logout" class="logout">退出登录</a>
+      </div>
+    </header>
+
+    <section class="panel">
+      <h2>模块入口</h2>
+      <div class="cards">
+        <a class="card" href="/report-daily">
+          <h3>日报主表</h3>
+          <p>按销售日期区间筛选，支持分页检索和导出。</p>
+        </a>
+        <a class="card" href="/analysis">
+          <h3>经营分析 Agent</h3>
+          <p>自动生成经营复盘，支持历史报告回看。</p>
+        </a>
+        <a class="card" href="/dashboard">
+          <h3>数据可视化看板</h3>
+          <p>查看核心指标、日环比/周环比、趋势与品类结构。</p>
+        </a>
+        <a class="card" href="/arrival/">
+          <h3>新品入库看板</h3>
+          <p>到货、未执行、计划与跟进备注。</p>
+        </a>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>系统健康状态</h2>
+        <button id="refreshHealthBtn" type="button">刷新状态</button>
+      </div>
+      <div id="healthBox" class="status">加载中...</div>
+    </section>
+
+    <section class="panel">
+      <h2>更新任务</h2>
+      <div class="actions">
+        <button id="refreshArrivalBtn" type="button">更新新品看板数据</button>
+        <button id="rebuildWeeklyBtn" type="button">重建报表数据</button>
+      </div>
+      <div id="jobStatus" class="status"></div>
+      <pre id="jobLog" class="job-log"></pre>
+    </section>
+  </main>
+
+  <script src="/portal.js"></script>
+</body>
+</html>

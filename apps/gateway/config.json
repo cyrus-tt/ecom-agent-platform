@@ -1,0 +1,13 @@
+﻿{
+  "postgres": {
+    "host": "127.0.0.1",
+    "port": 5432,
+    "database": "ecom_dashboard_v2",
+    "user": "ecom_app",
+    "password": "ecom123456",
+    "ssl": false,
+    "connection_timeout_ms": 10000,
+    "statement_timeout_ms": 120000,
+    "max_pool_size": 10
+  }
+}

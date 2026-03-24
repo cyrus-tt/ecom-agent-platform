@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>经营分析 Agent</title>
+  <link rel="stylesheet" href="/analysis.css">
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <h1>经营分析 Agent</h1>
+      <a class="link-btn" href="/">返回门户</a>
+    </header>
+
+    <section class="panel">
+      <div class="toolbar">
+        <label for="periodType">周期</label>
+        <select id="periodType">
+          <option value="day">日</option>
+          <option value="week" selected>周</option>
+          <option value="month">月</option>
+        </select>
+
+        <label for="startDateInput">开始日期</label>
+        <input id="startDateInput" type="date">
+        <label for="endDateInput">结束日期</label>
+        <input id="endDateInput" type="date">
+
+        <button id="generateBtn" class="primary" type="button">生成分析</button>
+      </div>
+      <div id="statusBox" class="status">请先选择周期后生成报告。</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>当前报告</h2>
+        <span id="reportMeta" class="meta">-</span>
+      </div>
+      <article id="reportBox" class="report markdown-body">
+        <p class="muted">暂无报告。</p>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>历史报告</h2>
+        <button id="refreshHistoryBtn" type="button">刷新</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>周期</th>
+              <th>范围</th>
+              <th>状态</th>
+              <th>创建时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody">
+            <tr>
+              <td colspan="6">暂无数据</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/analysis.js"></script>
+</body>
+</html>
