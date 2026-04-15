@@ -16,6 +16,7 @@ const STATES = {
   CLEANING: "CLEANING",
   CONFIRMING: "CONFIRMING",
   DISPATCHING: "DISPATCHING",
+  CONFIRMING_SIZE: "CONFIRMING_SIZE",
   RENDERING: "RENDERING",
   DONE: "DONE",
   FAILED: "FAILED",
@@ -91,7 +92,20 @@ async function runTask(taskId) {
       task = taskStore.getTask(taskId);
     }
 
-    await stepDispatch(task);
+    // 第一次调拨计算(检测尺码替代)
+    await stepDispatchPlan(task, { detectSubstitutions: true });
+    task = taskStore.getTask(taskId);
+
+    if (task.meta.dispatchReport && Array.isArray(task.meta.dispatchReport.sizeSubstitutions)
+        && task.meta.dispatchReport.sizeSubstitutions.length > 0) {
+      await stepConfirmSize(task);
+      task = taskStore.getTask(taskId);
+      // 第二次调拨计算,不再检测替代
+      await stepDispatchPlan(task, { detectSubstitutions: false });
+      task = taskStore.getTask(taskId);
+    }
+
+    await stepRender(task);
     task = taskStore.getTask(taskId);
 
     taskStore.updateTask(taskId, { state: STATES.DONE });
@@ -291,9 +305,10 @@ function applyConfirmToCleanedFile(task, issues, responses) {
   return { droppedCount: dropIndexes.size, droppedRowNums };
 }
 
-async function stepDispatch(task) {
+async function stepDispatchPlan(task, options = {}) {
   taskStore.updateTask(task.id, { state: STATES.DISPATCHING });
-  emit(task.id, "DISPATCHING", "info", "读取库存并计算调拨方案...");
+  const label = options.detectSubstitutions === false ? "(复算)" : "";
+  emit(task.id, "DISPATCHING", "info", `读取库存并计算调拨方案${label}...`);
 
   const { headers, rows } = readDemandExcel(task.meta.cleanedFile);
   const colMap = findColumns(headers);
@@ -305,26 +320,23 @@ async function stepDispatch(task) {
   const physicalIndex = buildPhysicalIndex(physicalRows);
 
   const base = path.basename(task.meta.files.demandFile, path.extname(task.meta.files.demandFile));
-  const result = computeDispatch(cleaned, colMap, virtualIndex, physicalIndex, task.meta.transportMode, base);
+  const result = computeDispatch(
+    cleaned,
+    colMap,
+    virtualIndex,
+    physicalIndex,
+    task.meta.transportMode,
+    base,
+    { detectSubstitutions: options.detectSubstitutions !== false }
+  );
 
-  taskStore.updateTask(task.id, { state: STATES.RENDERING });
-  emit(task.id, "RENDERING", "info", "生成导入模板...");
-
-  const outDir = task.meta.outDir;
   const meta = { ...task.meta };
-
-  if (result.dispatchLines.length > 0) {
-    const dispatchFile = path.join(outDir, `调拨批量模板_${base}.xlsx`);
-    const wb = buildDispatchWorkbook(result.dispatchLines);
-    XLSX.writeFile(wb, dispatchFile);
-    meta.dispatchTemplateFile = dispatchFile;
-  }
-  if (result.moveLines.length > 0) {
-    const moveFile = path.join(outDir, `移仓单批量导入模板_${base}.csv`);
-    fs.writeFileSync(moveFile, buildMoveCsv(result.moveLines), "utf-8");
-    meta.moveTemplateFile = moveFile;
-  }
-
+  meta._plan = {
+    dispatchLines: result.dispatchLines,
+    moveLines: result.moveLines,
+    docCount: result.docCount,
+    base,
+  };
   meta.dispatchReport = {
     okCount: result.dispatchLines.length,
     totalQty: result.dispatchLines.reduce((s, l) => s + l.qty, 0),
@@ -334,13 +346,200 @@ async function stepDispatch(task) {
     noVirtualStock: result.report.noVirtualStock,
     duplicateConfirm: result.report.duplicateConfirm,
     partialStock: result.report.partialStock,
+    sizeSubstitutions: result.report.sizeSubstitutions || [],
   };
   taskStore.updateTask(task.id, { meta });
 
   emit(task.id, "DISPATCHED", "milestone",
-    `调拨计算完成: ${result.dispatchLines.length} 行 / ${meta.dispatchReport.totalQty} 件 / ${result.docCount} 个单据`,
+    `调拨计算完成: ${result.dispatchLines.length} 行 / ${meta.dispatchReport.totalQty} 件 / ${result.docCount} 个单据` +
+    (meta.dispatchReport.sizeSubstitutions.length > 0
+      ? `,发现 ${meta.dispatchReport.sizeSubstitutions.length} 项可换尺码`
+      : ""),
     meta.dispatchReport
   );
+}
+
+async function stepConfirmSize(task) {
+  taskStore.updateTask(task.id, { state: STATES.CONFIRMING_SIZE });
+  const subs = task.meta.dispatchReport.sizeSubstitutions || [];
+  const issues = subs.map((s, i) => buildSizeIssue(s, i));
+
+  const token = taskStore.createConfirmToken(task.id);
+  const confirmUrl = `${getPublicUrl()}/dispatch/confirm/${task.id}?token=${token}`;
+
+  const meta = { ...task.meta };
+  meta.sizeConfirmMeta = {
+    issues,
+    token,
+    confirmUrl,
+    requestedAt: new Date().toISOString(),
+  };
+  taskStore.updateTask(task.id, { meta });
+
+  emit(task.id, "SIZE_CONFIRM_REQUESTED", "milestone",
+    `发现 ${issues.length} 项可换大一码的需求,已向需求人发起确认`,
+    { issues, confirmUrl, dingtalkConfigured: !!dingtalk.getWebhookUrl() }
+  );
+
+  const dt = await dingtalk.sendConfirmRequest(task.title, issues, confirmUrl);
+  if (dt.skipped) emit(task.id, "SIZE_CONFIRM_NO_DINGTALK", "warn", "钉钉 webhook 未配置,请直接打开确认页", { confirmUrl });
+  else if (dt.ok === false) emit(task.id, "SIZE_CONFIRM_DINGTALK_FAILED", "warn", `钉钉发送失败: ${dt.error}`, { confirmUrl });
+  else emit(task.id, "SIZE_CONFIRM_DINGTALK_SENT", "info", "钉钉消息已发送,等待需求人确认", { confirmUrl });
+
+  const timeoutMs = Number(process.env.DISPATCH_CONFIRM_TIMEOUT_MS || 4 * 3600 * 1000);
+  const responses = await waitForConfirm(task.id, timeoutMs);
+
+  emit(task.id, "SIZE_CONFIRM_RECEIVED", "milestone", "已收到需求人对尺码替代的回执", { responses });
+
+  const applyResult = applySizeDecisionsToCleanedFile(task, issues, subs, responses);
+  emit(task.id, "SIZE_CONFIRM_APPLIED", "info",
+    `已按回执调整需求表: 换码 ${applyResult.substitutedCount} 行,整行取消 ${applyResult.cancelledCount} 行,保持原码 ${applyResult.keptCount} 行`,
+    applyResult
+  );
+
+  const meta2 = taskStore.getTask(task.id).meta;
+  meta2.sizeConfirmResult = { issues, responses, ...applyResult, confirmedAt: new Date().toISOString() };
+  taskStore.updateTask(task.id, { meta: meta2 });
+}
+
+function buildSizeIssue(sub, idx) {
+  const options = [];
+  if (sub.scenario === "A") {
+    options.push({ value: "substitute", label: `整单换为 ${sub.candidate.size}(${sub.qty} 件,可发)` });
+    options.push({ value: "cancel", label: `取消这行(原 ${sub.size} ${sub.qty} 件全缺,不发)` });
+  } else {
+    options.push({
+      value: "substitute",
+      label: `缺的 ${sub.missingQty} 件换为 ${sub.candidate.size}(原 ${sub.size} 照发 ${sub.fulfilled} 件)`,
+    });
+    options.push({
+      value: "keep",
+      label: `不换,只发 ${sub.size} ${sub.fulfilled} 件,缺 ${sub.missingQty} 件接受`,
+    });
+    options.push({
+      value: "cancel",
+      label: `整行取消(${sub.size} ${sub.fulfilled} 件也不发)`,
+    });
+  }
+  return {
+    id: `s_${idx}`,
+    index: idx,
+    type: "size_substitution",
+    scenario: sub.scenario,
+    sku: sub.sku,
+    originalSize: sub.size,
+    candidateSize: sub.candidate.size,
+    qty: sub.qty,
+    fulfilled: sub.fulfilled,
+    missingQty: sub.missingQty,
+    physicalAvailable: sub.candidate.physicalAvailable,
+    virtualAvailable: sub.candidate.virtualAvailable,
+    rowIndex: sub.rowIndex,
+    description: sub.reason,
+    options,
+  };
+}
+
+function applySizeDecisionsToCleanedFile(task, issues, subs, responses) {
+  const cleanedFile = task.meta.cleanedFile;
+  if (!cleanedFile || !fs.existsSync(cleanedFile)) {
+    return { substitutedCount: 0, cancelledCount: 0, keptCount: 0, changes: [] };
+  }
+  const { headers, rows } = readDemandExcel(cleanedFile);
+  const colMap = findColumns(headers);
+
+  const dropIndexes = new Set();
+  const appendRows = [];
+  const changes = [];
+  let substitutedCount = 0;
+  let cancelledCount = 0;
+  let keptCount = 0;
+
+  for (const iss of issues) {
+    const key = `issue_${iss.index}`;
+    const action = responses[key] || "keep";
+    const sub = subs[iss.index];
+    if (!sub) continue;
+    const rowIdx = sub.rowIndex;
+
+    if (action === "cancel") {
+      dropIndexes.add(rowIdx);
+      cancelledCount += 1;
+      changes.push({ issueId: iss.id, action, rowIndex: rowIdx, sku: sub.sku, size: sub.size });
+      continue;
+    }
+    if (action === "substitute") {
+      substitutedCount += 1;
+      if (sub.scenario === "A") {
+        // 直接改原行的尺码为新尺码
+        if (rows[rowIdx] && colMap.size >= 0) {
+          rows[rowIdx][colMap.size] = sub.candidate.size;
+        }
+        changes.push({ issueId: iss.id, action, rowIndex: rowIdx, sku: sub.sku,
+          from: sub.size, to: sub.candidate.size, qty: sub.qty });
+      } else {
+        // B 场景:原行数量改为 fulfilled,新增一行数量=missingQty,尺码=候选码
+        if (rows[rowIdx] && colMap.qty >= 0) {
+          rows[rowIdx][colMap.qty] = sub.fulfilled;
+        }
+        const newRow = rows[rowIdx] ? rows[rowIdx].slice() : [];
+        if (colMap.size >= 0) newRow[colMap.size] = sub.candidate.size;
+        if (colMap.qty >= 0) newRow[colMap.qty] = sub.missingQty;
+        appendRows.push(newRow);
+        changes.push({ issueId: iss.id, action, rowIndex: rowIdx, sku: sub.sku,
+          keptQty: sub.fulfilled, addedSize: sub.candidate.size, addedQty: sub.missingQty });
+      }
+      continue;
+    }
+    // keep: 保持现状
+    keptCount += 1;
+    changes.push({ issueId: iss.id, action: "keep", rowIndex: rowIdx, sku: sub.sku, size: sub.size });
+  }
+
+  const nextRows = rows.filter((_, i) => !dropIndexes.has(i)).concat(appendRows);
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...nextRows]);
+  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+  XLSX.writeFile(wb, cleanedFile);
+
+  const meta = taskStore.getTask(task.id).meta;
+  if (meta.cleanReport) {
+    meta.cleanReport.cleanedCount = nextRows.length;
+  }
+  taskStore.updateTask(task.id, { meta });
+
+  return { substitutedCount, cancelledCount, keptCount, changes };
+}
+
+async function stepRender(task) {
+  taskStore.updateTask(task.id, { state: STATES.RENDERING });
+  emit(task.id, "RENDERING", "info", "生成导入模板...");
+
+  const plan = task.meta._plan || {};
+  const dispatchLines = plan.dispatchLines || [];
+  const moveLines = plan.moveLines || [];
+  const base = plan.base || "output";
+  const outDir = task.meta.outDir;
+  const meta = { ...task.meta };
+
+  if (dispatchLines.length > 0) {
+    const dispatchFile = path.join(outDir, `调拨批量模板_${base}.xlsx`);
+    const wb = buildDispatchWorkbook(dispatchLines);
+    XLSX.writeFile(wb, dispatchFile);
+    meta.dispatchTemplateFile = dispatchFile;
+  }
+  if (moveLines.length > 0) {
+    const moveFile = path.join(outDir, `移仓单批量导入模板_${base}.csv`);
+    fs.writeFileSync(moveFile, buildMoveCsv(moveLines), "utf-8");
+    meta.moveTemplateFile = moveFile;
+  }
+  delete meta._plan;
+  taskStore.updateTask(task.id, { meta });
+
+  emit(task.id, "RENDERED", "milestone", "导入模板已生成", {
+    dispatchFile: meta.dispatchTemplateFile ? path.basename(meta.dispatchTemplateFile) : null,
+    moveFile: meta.moveTemplateFile ? path.basename(meta.moveTemplateFile) : null,
+  });
 }
 
 function collectArtifacts(task) {

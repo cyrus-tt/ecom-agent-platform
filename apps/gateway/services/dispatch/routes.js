@@ -184,14 +184,26 @@ function registerRoutes(app, { requirePermission }) {
       const rowNums = Array.isArray(task.meta.cleanReport && task.meta.cleanReport.rowNums)
         ? task.meta.cleanReport.rowNums
         : rows.map((_, i) => i + 2);
+      // 根据任务当前状态决定用哪组 issues
+      let issues = [];
+      let issueKind = "warning";
+      if (task.state === "CONFIRMING_SIZE" && task.meta.sizeConfirmMeta) {
+        issues = task.meta.sizeConfirmMeta.issues || [];
+        issueKind = "size_substitution";
+      } else if (task.meta.confirmMeta) {
+        issues = task.meta.confirmMeta.issues || [];
+        issueKind = "warning";
+      }
       res.json({
         ok: true,
         taskId: task.id,
         title: task.title,
+        state: task.state,
         headers,
         rows,
         rowNums,
-        issues: task.meta.confirmMeta ? task.meta.confirmMeta.issues : [],
+        issues,
+        issueKind,
       });
     } catch (err) {
       res.status(500).json({ ok: false, message: String(err.message || err) });

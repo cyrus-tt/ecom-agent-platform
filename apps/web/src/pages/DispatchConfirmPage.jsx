@@ -50,16 +50,26 @@ export default function DispatchConfirmPage() {
     return map;
   }, [data]);
 
+  const issueByRowIndex = useMemo(() => {
+    const map = new Map();
+    if (data && data.issues) {
+      for (const iss of data.issues) {
+        if (typeof iss.rowIndex === "number") map.set(iss.rowIndex, iss);
+      }
+    }
+    return map;
+  }, [data]);
+
   const tableData = useMemo(() => {
     if (!data) return [];
     return data.rows.map((row, idx) => {
       const rowNum = data.rowNums[idx] || idx + 2;
       const obj = { _rowNum: rowNum, _key: idx };
       data.headers.forEach((h, j) => { obj[`c${j}`] = row[j]; });
-      obj._issue = issueByRowNum.get(rowNum) || null;
+      obj._issue = issueByRowNum.get(rowNum) || issueByRowIndex.get(idx) || null;
       return obj;
     });
-  }, [data, issueByRowNum]);
+  }, [data, issueByRowNum, issueByRowIndex]);
 
   const columns = useMemo(() => {
     if (!data) return [];
@@ -122,12 +132,19 @@ export default function DispatchConfirmPage() {
   }
   if (!data) return <Empty />;
 
+  const isSizeKind = data.issueKind === "size_substitution";
+
   return (
     <div style={{ padding: 24, maxWidth: 1400, margin: "0 auto" }}>
       <style>{`.dispatch-row-issue td { background: #fff7e6 !important; }`}</style>
-      <Title level={3}>调拨需求确认 · {data.title}</Title>
+      <Title level={3}>
+        {isSizeKind ? "尺码替代确认" : "调拨需求确认"} · {data.title}
+      </Title>
       <Paragraph type="secondary">
-        检测到 <Text strong>{data.issues.length}</Text> 项异常(下方表格中黄色背景行)。请逐项选择处理方式,然后提交。
+        {isSizeKind
+          ? <>以下 <Text strong>{data.issues.length}</Text> 条需求原尺码库存不足,可以往大一码调配(黄色背景行)。请逐项选择。</>
+          : <>检测到 <Text strong>{data.issues.length}</Text> 项异常(下方表格中黄色背景行)。请逐项选择处理方式,然后提交。</>
+        }
       </Paragraph>
 
       <Card title="需求表预览(异常行高亮)" size="small" style={{ marginBottom: 16 }}>
@@ -142,20 +159,31 @@ export default function DispatchConfirmPage() {
         />
       </Card>
 
-      <Card title="异常项处理" size="small" style={{ marginBottom: 16 }}>
+      <Card title={isSizeKind ? "尺码替代选择" : "异常项处理"} size="small" style={{ marginBottom: 16 }}>
         <Space direction="vertical" size={12} style={{ width: "100%" }}>
           {data.issues.map((iss, i) => (
             <div key={iss.id} style={{ padding: 10, background: "#fafafa", borderRadius: 4 }}>
               <div style={{ marginBottom: 6 }}>
-                <Text strong>#{i + 1}</Text> · 第 {iss.rowNum || "?"} 行 · {iss.description}
+                <Text strong>#{i + 1}</Text>
+                {iss.type === "size_substitution" ? (
+                  <> · 货号 <Text code>{iss.sku}</Text> · 原尺码 <Text code>{iss.originalSize}</Text>
+                    {iss.scenario === "B" ? <> · 需 {iss.qty} 件 / 可发 {iss.fulfilled} / 缺 {iss.missingQty}</> : <> · 需 {iss.qty} 件 / 全部缺货</>}
+                    <> · 候选 <Text code style={{ color: "#1677ff" }}>{iss.candidateSize}</Text>
+                    (实仓 {iss.physicalAvailable} / 虚仓 {iss.virtualAvailable})</>
+                  </>
+                ) : (
+                  <> · 第 {iss.rowNum || "?"} 行 · {iss.description}</>
+                )}
               </div>
               <Radio.Group
                 value={responses[`issue_${iss.index}`]}
                 onChange={(e) => setResponses((p) => ({ ...p, [`issue_${iss.index}`]: e.target.value }))}
               >
-                {iss.options.map((opt) => (
-                  <Radio key={opt.value} value={opt.value}>{opt.label}</Radio>
-                ))}
+                <Space direction="vertical">
+                  {iss.options.map((opt) => (
+                    <Radio key={opt.value} value={opt.value}>{opt.label}</Radio>
+                  ))}
+                </Space>
               </Radio.Group>
             </div>
           ))}

@@ -197,6 +197,80 @@ function allocateVirtualPools(barcode, qty, poolsByBarcode) {
   return { allocations, remaining };
 }
 
+// ── 尺码替代:只往大一码 ─────────────────────────────────
+const APPAREL_ORDER = ["XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"];
+
+function isApparelSize(s) {
+  return APPAREL_ORDER.includes(String(s || "").toUpperCase());
+}
+
+function isShoeSize(s) {
+  return /^\d+(\.\d+)?$/.test(String(s || "").trim());
+}
+
+/**
+ * 找同 SKU 下"大一码"(严格更大,仅一个候选),要求候选尺码虚仓+实仓都够数
+ * @returns {null | { size, barcode, physicalAvailable, virtualAvailable }}
+ */
+function findLargerSizeCandidate(sku, currentSize, qtyNeeded, virtualIndex, physicalIndex) {
+  const { skuSizeToBarcode, poolsByBarcode } = virtualIndex;
+  const { warehousesByBarcode } = physicalIndex;
+  // 收集该 SKU 已知的所有尺码
+  const sizes = [];
+  for (const [k, v] of skuSizeToBarcode.entries()) {
+    const [s, sz] = k.split("||");
+    if (s === sku) sizes.push({ size: sz, barcode: v });
+  }
+  if (sizes.length === 0) return null;
+
+  const cur = String(currentSize).toUpperCase().trim();
+  let nextSize = null;
+  let nextBarcode = null;
+
+  if (isApparelSize(cur)) {
+    const curIdx = APPAREL_ORDER.indexOf(cur);
+    if (curIdx < 0) return null;
+    for (let i = curIdx + 1; i < APPAREL_ORDER.length; i++) {
+      const cand = APPAREL_ORDER[i];
+      const hit = sizes.find((x) => String(x.size).toUpperCase() === cand);
+      if (hit) {
+        nextSize = hit.size;
+        nextBarcode = hit.barcode;
+        break;
+      }
+    }
+  } else if (isShoeSize(cur)) {
+    const curNum = parseFloat(cur);
+    const larger = sizes
+      .filter((x) => isShoeSize(x.size))
+      .map((x) => ({ ...x, num: parseFloat(x.size) }))
+      .filter((x) => x.num > curNum)
+      .sort((a, b) => a.num - b.num);
+    if (larger.length > 0) {
+      nextSize = larger[0].size;
+      nextBarcode = larger[0].barcode;
+    }
+  }
+
+  if (!nextSize || !nextBarcode) return null;
+
+  // 检查候选码的虚仓+实仓是否够数
+  const warehouses = warehousesByBarcode.get(nextBarcode) || [];
+  const physAvailable = warehouses.reduce((s, w) => s + Math.max(0, w.available || 0), 0);
+  const poolMap = poolsByBarcode.get(nextBarcode) || new Map();
+  let virtAvailable = 0;
+  for (const info of poolMap.values()) virtAvailable += Math.max(0, info.available || 0);
+
+  if (physAvailable < qtyNeeded || virtAvailable < qtyNeeded) return null;
+
+  return {
+    size: nextSize,
+    barcode: nextBarcode,
+    physicalAvailable: physAvailable,
+    virtualAvailable: virtAvailable,
+  };
+}
+
 // ── 主调拨逻辑 ─────────────────────────────────────────
 
 /**
@@ -207,9 +281,11 @@ function allocateVirtualPools(barcode, qty, poolsByBarcode) {
  * @param {Object} physicalIndex - buildPhysicalIndex 结果
  * @param {string} transportMode - 运输方式
  * @param {string} remarkPrefix - 备注前缀（通常是文件名）
+ * @param {Object} options - { detectSubstitutions?: boolean }
  * @returns {{ dispatchRows, moveRows, report }}
  */
-function computeDispatch(demandRows, colMap, virtualIndex, physicalIndex, transportMode, remarkPrefix) {
+function computeDispatch(demandRows, colMap, virtualIndex, physicalIndex, transportMode, remarkPrefix, options = {}) {
+  const detectSubstitutions = options.detectSubstitutions !== false;
   const { skuSizeToBarcode, poolsByBarcode } = virtualIndex;
   const { warehousesByBarcode } = physicalIndex;
 
@@ -225,9 +301,11 @@ function computeDispatch(demandRows, colMap, virtualIndex, physicalIndex, transp
     partialStock: [],
     duplicateConfirm: [],
     addressIssues: [],
+    sizeSubstitutions: [],
   };
 
-  for (const row of demandRows) {
+  for (let rowIndex = 0; rowIndex < demandRows.length; rowIndex++) {
+    const row = demandRows[rowIndex];
     const sku = str(row[colMap.sku]);
     const size = str(row[colMap.size]);
     const qty = parseInt(row[colMap.qty], 10) || 0;
@@ -247,13 +325,30 @@ function computeDispatch(demandRows, colMap, virtualIndex, physicalIndex, transp
     const barcode = skuSizeToBarcode.get(key);
 
     if (!barcode) {
-      report.noBarcode.push({ sku, size, qty, reason: "分配池库存中未找到该货号+尺码" });
+      // 原尺码在库存系统里无记录(通常是该码已停产或从未入库)
+      // 视为 A 场景的一种,尝试大一码
+      const cand = detectSubstitutions
+        ? findLargerSizeCandidate(sku, size, qty, virtualIndex, physicalIndex)
+        : null;
+      if (cand) {
+        report.sizeSubstitutions.push({
+          rowIndex, sku, size, qty, barcode: "", supplier, requester, contact, phone,
+          province, city, district, detail,
+          scenario: "A",
+          missingQty: qty,
+          fulfilled: 0,
+          candidate: cand,
+          reason: `原尺码 ${size} 库存系统无记录,可整单换为 ${cand.size}(虚仓 ${cand.virtualAvailable} / 实仓 ${cand.physicalAvailable})`,
+        });
+      } else {
+        report.noBarcode.push({ sku, size, qty, reason: "分配池库存中未找到该货号+尺码" });
+      }
       continue;
     }
 
     allBarcodes.push(barcode);
     demandItems.push({
-      sku, size, qty, barcode, supplier, requester, contact, phone,
+      rowIndex, sku, size, qty, barcode, supplier, requester, contact, phone,
       province, city, district, detail,
     });
   }
@@ -270,13 +365,42 @@ function computeDispatch(demandRows, colMap, virtualIndex, physicalIndex, transp
     const phys = allocatePhysicalWarehouse(item.barcode, item.qty, warehousesByBarcode, warehouseRank);
 
     if (phys.allocations.length === 0) {
-      report.noStock.push({ ...item, reason: "所有实仓均无库存" });
+      // A 场景:原码全缺 → 尝试大一码
+      const cand = detectSubstitutions
+        ? findLargerSizeCandidate(item.sku, item.size, item.qty, virtualIndex, physicalIndex)
+        : null;
+      if (cand) {
+        report.sizeSubstitutions.push({
+          ...item,
+          scenario: "A",
+          missingQty: item.qty,
+          fulfilled: 0,
+          candidate: cand,
+          reason: `原尺码 ${item.size} 全部缺货,可整单换为 ${cand.size}(虚仓 ${cand.virtualAvailable} / 实仓 ${cand.physicalAvailable})`,
+        });
+      } else {
+        report.noStock.push({ ...item, reason: "所有实仓均无库存" });
+      }
       continue;
     }
 
     const fulfilledQty = item.qty - phys.remaining;
     if (fulfilledQty <= 0) {
-      report.noStock.push({ ...item, reason: "实仓可发数量为 0" });
+      const cand = detectSubstitutions
+        ? findLargerSizeCandidate(item.sku, item.size, item.qty, virtualIndex, physicalIndex)
+        : null;
+      if (cand) {
+        report.sizeSubstitutions.push({
+          ...item,
+          scenario: "A",
+          missingQty: item.qty,
+          fulfilled: 0,
+          candidate: cand,
+          reason: `原尺码 ${item.size} 可发 0 件,可整单换为 ${cand.size}(虚仓 ${cand.virtualAvailable} / 实仓 ${cand.physicalAvailable})`,
+        });
+      } else {
+        report.noStock.push({ ...item, reason: "实仓可发数量为 0" });
+      }
       continue;
     }
 
@@ -293,10 +417,27 @@ function computeDispatch(demandRows, colMap, virtualIndex, physicalIndex, transp
     }
 
     if (phys.remaining > 0) {
+      // B 场景:部分满足 → 对缺的那几件尝试大一码
+      const missing = phys.remaining;
+      const cand = detectSubstitutions
+        ? findLargerSizeCandidate(item.sku, item.size, missing, virtualIndex, physicalIndex)
+        : null;
+      if (cand) {
+        report.sizeSubstitutions.push({
+          ...item,
+          scenario: "B",
+          fulfilled: fulfilledQty,
+          missingQty: missing,
+          candidate: cand,
+          reason: `原尺码 ${item.size} 需 ${item.qty} 件,实仓仅可发 ${fulfilledQty} 件,缺 ${missing} 件可换 ${cand.size}(虚仓 ${cand.virtualAvailable} / 实仓 ${cand.physicalAvailable})`,
+        });
+        // 等用户确认:本行暂不产出 dispatch/move,由第二次重跑时处理
+        continue;
+      }
       report.partialStock.push({
         ...item,
         fulfilled: fulfilledQty,
-        missing: phys.remaining,
+        missing,
         reason: `实仓库存不足，需要${item.qty}件，实际可发${fulfilledQty}件`,
       });
     }
