@@ -5,6 +5,7 @@ import {
   InboxOutlined,
   SettingOutlined,
   ShopOutlined,
+  SwapOutlined,
   TableOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
@@ -20,6 +21,7 @@ import AdminAccountsPage from "./pages/AdminAccountsPage";
 import ChannelDashboardPage from "./pages/ChannelDashboardPage";
 import DailyReportPage from "./pages/DailyReportPage";
 import DashboardPage from "./pages/DashboardPage";
+import DispatchPage from "./pages/DispatchPage";
 import NoAccessPage from "./pages/NoAccessPage";
 import PortalPage from "./pages/PortalPage";
 
@@ -33,6 +35,7 @@ const MODULE_ICON_MAP = {
   dashboard: <BarChartOutlined />,
   channel_dashboard: <ShopOutlined />,
   analysis: <FileTextOutlined />,
+  dispatch: <SwapOutlined />,
 };
 
 function LoadingScreen() {
@@ -238,6 +241,14 @@ function AppShell() {
             element={
               <GuardedElement permission="analysis">
                 <AnalysisPage />
+              </GuardedElement>
+            }
+          />
+          <Route
+            path="/dispatch"
+            element={
+              <GuardedElement permission="dispatch">
+                <DispatchPage />
               </GuardedElement>
             }
           />

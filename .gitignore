@@ -3,6 +3,7 @@ dist/
 build/
 runtime/pids/
 runtime/*.log
+data/dispatch/
 .env
 .env.local
 .DS_Store

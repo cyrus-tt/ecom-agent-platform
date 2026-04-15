@@ -14,6 +14,7 @@ const agentSkills = require("./services/agentSkills");
 const analysisContextProvider = require("./services/analysisContextProvider");
 const appConfig = require("./services/appConfig");
 const runtimeSecrets = require("./services/runtimeSecrets");
+const dispatchModule = require("./services/dispatch");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -55,6 +56,7 @@ const AUTH_PERMISSION_MODULES = [
   { key: "dashboard", label: "可视化", route: "/dashboard", description: "综合数据可视化看板" },
   { key: "channel_dashboard", label: "渠道", route: "/channel-dashboard", description: "渠道店铺看板" },
   { key: "analysis", label: "分析", route: "/analysis", description: "AI 经营分析与历史报告" },
+  ...(dispatchModule.isEnabled() ? [dispatchModule.PERMISSION_MODULE] : []),
 ];
 
 const AUTH_PERMISSION_KEYS = AUTH_PERMISSION_MODULES.map((item) => item.key);
@@ -784,7 +786,10 @@ function isPublicPath(pathname) {
     pathname === "/readyz" ||
     pathname === "/favicon.ico" ||
     pathname === "/login.css" ||
-    pathname === "/login.js"
+    pathname === "/login.js" ||
+    pathname.startsWith("/dispatch/confirm/") ||
+    pathname === "/api/dispatch/public/preview" ||
+    pathname === "/api/dispatch/public/confirm"
   );
 }
 
@@ -2447,6 +2452,18 @@ app.get(["/analysis", "/analysis/"], requirePermission("analysis"), (_req, res) 
 app.get(["/arrival", "/arrival/"], requirePermission("arrival"), (_req, res) => {
   sendReactApp(res);
 });
+
+// ── dispatch agent (开关由 DISPATCH_AGENT_ENABLED 控制) ──
+if (dispatchModule.isEnabled()) {
+  app.get(["/dispatch", "/dispatch/"], requirePermission("dispatch"), (_req, res) => {
+    sendReactApp(res);
+  });
+  // 需求人确认页:走一次性 token,不要求登录
+  app.get(["/dispatch/confirm/:taskId", "/dispatch/confirm/:taskId/"], (_req, res) => {
+    sendReactApp(res);
+  });
+  dispatchModule.tryRegister(app, { requirePermission });
+}
 
 app.use((err, _req, res, _next) => {
   const message = String(err && err.message ? err.message : err);

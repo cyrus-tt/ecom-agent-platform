@@ -44,6 +44,13 @@ export const APP_MODULES = [
     menuKey: "/analysis",
     description: "AI 经营分析与历史报告",
   },
+  {
+    key: "dispatch",
+    label: "调拨",
+    path: "/dispatch",
+    menuKey: "/dispatch",
+    description: "调拨 Agent:清洗需求、计算调拨方案、生成导入模板",
+  },
 ];
 
 export function hasModulePermission(auth, moduleKey) {
