@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Empty, Input, message, Radio, Space, Spin, Table, Typography } from "antd";
+import { Alert, Button, Card, Empty, Input, message, Radio, Space, Spin, Table, Tag, Tooltip, Typography } from "antd";
 import axios from "axios";
 
 const { Title, Paragraph, Text } = Typography;
@@ -71,6 +71,46 @@ export default function DispatchConfirmPage() {
     });
   }, [data, issueByRowNum, issueByRowIndex]);
 
+  function renderIssueCell(issue) {
+    if (!issue) return <Text type="secondary">—</Text>;
+    let reasonLabel = "异常";
+    let reasonColor = "orange";
+    if (issue.type === "size_substitution") {
+      reasonLabel = `换大一码 → ${issue.candidateSize}`;
+      reasonColor = "gold";
+    } else if (issue.type === "duplicate") {
+      reasonLabel = "同单重复条码";
+      reasonColor = "volcano";
+    } else if (issue.description && issue.description.includes("地址矛盾")) {
+      reasonLabel = "地址矛盾";
+    } else if (issue.description && issue.description.includes("数量无效")) {
+      reasonLabel = "数量无效";
+    }
+    const detail = issue.type === "size_substitution"
+      ? (issue.scenario === "B"
+          ? `${issue.sku} ${issue.originalSize}: 需 ${issue.qty} / 可发 ${issue.fulfilled} / 缺 ${issue.missingQty}，候选 ${issue.candidateSize}(实仓 ${issue.physicalAvailable}/虚仓 ${issue.virtualAvailable})`
+          : `${issue.sku} ${issue.originalSize}: 需 ${issue.qty} 全部缺货，候选 ${issue.candidateSize}(实仓 ${issue.physicalAvailable}/虚仓 ${issue.virtualAvailable})`)
+      : issue.description;
+    return (
+      <div>
+        <Tooltip title={detail}>
+          <Tag color={reasonColor} style={{ marginBottom: 6 }}>{reasonLabel}</Tag>
+        </Tooltip>
+        <Radio.Group
+          size="small"
+          value={responses[`issue_${issue.index}`]}
+          onChange={(e) => setResponses((p) => ({ ...p, [`issue_${issue.index}`]: e.target.value }))}
+        >
+          <Space direction="vertical" size={2}>
+            {issue.options.map((opt) => (
+              <Radio key={opt.value} value={opt.value}>{opt.label}</Radio>
+            ))}
+          </Space>
+        </Radio.Group>
+      </div>
+    );
+  }
+
   const columns = useMemo(() => {
     if (!data) return [];
     const cols = [{
@@ -82,11 +122,21 @@ export default function DispatchConfirmPage() {
     data.headers.forEach((h, j) => {
       cols.push({ title: h, dataIndex: `c${j}`, ellipsis: true });
     });
+    cols.push({
+      title: "异常 / 处理",
+      dataIndex: "_issue",
+      width: 260,
+      fixed: "right",
+      render: (_v, record) => renderIssueCell(record._issue),
+    });
     return cols;
-  }, [data]);
+  }, [data, responses]);
 
   function rowClassName(record) {
-    return record._issue ? "dispatch-row-issue" : "";
+    if (!record._issue) return "";
+    if (record._issue.type === "size_substitution") return "dispatch-row-size";
+    if (record._issue.type === "duplicate") return "dispatch-row-dup";
+    return "dispatch-row-issue";
   }
 
   async function handleSubmit() {
@@ -135,71 +185,44 @@ export default function DispatchConfirmPage() {
   const isSizeKind = data.issueKind === "size_substitution";
 
   return (
-    <div style={{ padding: 24, maxWidth: 1400, margin: "0 auto" }}>
-      <style>{`.dispatch-row-issue td { background: #fff7e6 !important; }`}</style>
+    <div style={{ padding: 24, maxWidth: 1600, margin: "0 auto" }}>
+      <style>{`
+        .dispatch-row-issue td { background: #fff7e6 !important; }
+        .dispatch-row-size td { background: #fffbe6 !important; }
+        .dispatch-row-dup td { background: #fff1f0 !important; }
+      `}</style>
       <Title level={3}>
         {isSizeKind ? "尺码替代确认" : "调拨需求确认"} · {data.title}
       </Title>
       <Paragraph type="secondary">
-        {isSizeKind
-          ? <>以下 <Text strong>{data.issues.length}</Text> 条需求原尺码库存不足,可以往大一码调配(黄色背景行)。请逐项选择。</>
-          : <>检测到 <Text strong>{data.issues.length}</Text> 项异常(下方表格中黄色背景行)。请逐项选择处理方式,然后提交。</>
-        }
+        检测到 <Text strong>{data.issues.length}</Text> 项异常(黄色/红色背景行)。直接在表格右侧的「异常 / 处理」列中逐行勾选处理方式,然后点底部提交。
       </Paragraph>
 
-      <Card title="需求表预览(异常行高亮)" size="small" style={{ marginBottom: 16 }}>
+      <Card size="small" style={{ marginBottom: 16 }}>
         <Table
           size="small"
           rowKey="_key"
           columns={columns}
           dataSource={tableData}
-          pagination={{ pageSize: 20 }}
+          pagination={{ pageSize: 30 }}
           scroll={{ x: true }}
           rowClassName={rowClassName}
         />
       </Card>
 
-      <Card title={isSizeKind ? "尺码替代选择" : "异常项处理"} size="small" style={{ marginBottom: 16 }}>
+      <Card size="small">
         <Space direction="vertical" size={12} style={{ width: "100%" }}>
-          {data.issues.map((iss, i) => (
-            <div key={iss.id} style={{ padding: 10, background: "#fafafa", borderRadius: 4 }}>
-              <div style={{ marginBottom: 6 }}>
-                <Text strong>#{i + 1}</Text>
-                {iss.type === "size_substitution" ? (
-                  <> · 货号 <Text code>{iss.sku}</Text> · 原尺码 <Text code>{iss.originalSize}</Text>
-                    {iss.scenario === "B" ? <> · 需 {iss.qty} 件 / 可发 {iss.fulfilled} / 缺 {iss.missingQty}</> : <> · 需 {iss.qty} 件 / 全部缺货</>}
-                    <> · 候选 <Text code style={{ color: "#1677ff" }}>{iss.candidateSize}</Text>
-                    (实仓 {iss.physicalAvailable} / 虚仓 {iss.virtualAvailable})</>
-                  </>
-                ) : (
-                  <> · 第 {iss.rowNum || "?"} 行 · {iss.description}</>
-                )}
-              </div>
-              <Radio.Group
-                value={responses[`issue_${iss.index}`]}
-                onChange={(e) => setResponses((p) => ({ ...p, [`issue_${iss.index}`]: e.target.value }))}
-              >
-                <Space direction="vertical">
-                  {iss.options.map((opt) => (
-                    <Radio key={opt.value} value={opt.value}>{opt.label}</Radio>
-                  ))}
-                </Space>
-              </Radio.Group>
-            </div>
-          ))}
-
           <div>
             <Text>补充说明(可选)</Text>
             <Input.TextArea
-              rows={3}
+              rows={2}
               value={comment}
               onChange={(e) => setComment(e.target.value)}
-              placeholder="例如:第3行删除,第7行确认"
+              placeholder="例如:这批货急用"
             />
           </div>
-
           <Button type="primary" size="large" loading={submitting} onClick={handleSubmit}>
-            提交确认
+            提交确认({data.issues.length} 项)
           </Button>
         </Space>
       </Card>

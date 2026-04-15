@@ -226,19 +226,27 @@ async function stepConfirm(task) {
 function buildConfirmIssues(warnings) {
   return warnings.map((warning, i) => {
     const text = String(warning || "");
-    const isDuplicate = text.includes("疑似重复");
+    const isDuplicate = text.includes("疑似重复") || text.includes("同单重复条码");
     const match = text.match(/第\s*(\d+)\s*行/);
     const rowNum = match ? Number(match[1]) : null;
+    const partnerMatch = text.match(/与第\s*(\d+)\s*行/);
+    const partnerRowNum = partnerMatch ? Number(partnerMatch[1]) : null;
     return {
       id: `w_${i}`,
       index: i,
       rowNum,
+      partnerRowNum,
       description: text,
       type: isDuplicate ? "duplicate" : "generic",
-      options: [
-        { value: "keep", label: isDuplicate ? "保留(按原数量)" : "确认无误,保留" },
-        { value: "drop", label: "删除此行" },
-      ],
+      options: isDuplicate
+        ? [
+            { value: "merge", label: "合并到另一行(数量相加)" },
+            { value: "drop", label: "删除此行" },
+          ]
+        : [
+            { value: "keep", label: "确认无误,保留" },
+            { value: "drop", label: "删除此行" },
+          ],
     };
   });
 }
@@ -272,21 +280,33 @@ function applyConfirmToCleanedFile(task, issues, responses) {
     ? task.meta.cleanReport.rowNums.slice()
     : rows.map((_, idx) => idx + 2);
 
+  const colMap = findColumns(headers);
   const dropIndexes = new Set();
   const droppedRowNums = [];
+  const mergedInto = [];
   for (const issue of issues) {
     const key = `issue_${issue.index}`;
     const action = responses[key];
-    if (action !== "drop") continue;
     if (!Number.isFinite(issue.rowNum)) continue;
-    const idx = rowNums.findIndex((rn, i) => rn === issue.rowNum && !dropIndexes.has(i));
-    if (idx < 0) continue;
-    dropIndexes.add(idx);
-    droppedRowNums.push(issue.rowNum);
+    if (action === "drop") {
+      const idx = rowNums.findIndex((rn, i) => rn === issue.rowNum && !dropIndexes.has(i));
+      if (idx < 0) continue;
+      dropIndexes.add(idx);
+      droppedRowNums.push(issue.rowNum);
+    } else if (action === "merge" && Number.isFinite(issue.partnerRowNum) && colMap.qty >= 0) {
+      const srcIdx = rowNums.findIndex((rn, i) => rn === issue.rowNum && !dropIndexes.has(i));
+      const dstIdx = rowNums.findIndex((rn, i) => rn === issue.partnerRowNum && !dropIndexes.has(i));
+      if (srcIdx < 0 || dstIdx < 0) continue;
+      const srcQty = parseInt(rows[srcIdx][colMap.qty], 10) || 0;
+      const dstQty = parseInt(rows[dstIdx][colMap.qty], 10) || 0;
+      rows[dstIdx][colMap.qty] = srcQty + dstQty;
+      dropIndexes.add(srcIdx);
+      mergedInto.push({ from: issue.rowNum, into: issue.partnerRowNum, newQty: srcQty + dstQty });
+    }
   }
 
   if (dropIndexes.size === 0) {
-    return { droppedCount: 0, droppedRowNums: [] };
+    return { droppedCount: 0, droppedRowNums: [], mergedInto };
   }
 
   const nextRows = rows.filter((_, i) => !dropIndexes.has(i));
@@ -302,7 +322,7 @@ function applyConfirmToCleanedFile(task, issues, responses) {
   meta.cleanReport.cleanedCount = nextRows.length;
   taskStore.updateTask(task.id, { meta });
 
-  return { droppedCount: dropIndexes.size, droppedRowNums };
+  return { droppedCount: dropIndexes.size, droppedRowNums, mergedInto };
 }
 
 async function stepDispatchPlan(task, options = {}) {

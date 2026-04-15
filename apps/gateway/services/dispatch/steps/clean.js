@@ -206,12 +206,19 @@ function cleanDemandRows(rows, headers) {
     row[colMap.detail] = detail;
 
     // 6. 重复检测
-    const dupKey = `${sku}||${normalizedSize}||${numQty}`;
-    if (duplicateMap.has(dupKey)) {
-      const prevIdx = duplicateMap.get(dupKey);
-      warnings.push(`第${rowNum}行: 疑似重复 - 与第${prevIdx}行完全相同 (${sku} ${normalizedSize} x${numQty})，需确认是否要两倍数量`);
-    } else {
-      duplicateMap.set(dupKey, rowNum);
+    // 业务规则: 调拨单号 = 收货地址 + 供应商 + 发货仓库, 不允许同单内出现重复条码
+    // 发货仓库在调拨分配阶段才确定, 清洗阶段只能按 (收货地址 + 供应商) 分组:
+    // 同一 (收货地址, 供应商) 下出现相同条码 (sku+size) 视为重复; 跨地址/供应商即使条码相同也是正常业务
+    const supplier = colMap.supplier >= 0 ? String(row[colMap.supplier] || "").trim() : "";
+    const addrFull = `${province}|${city}|${district}|${detail}`;
+    if (detail && supplier) {
+      const dupKey = `${addrFull}||${supplier}||${sku}||${normalizedSize}`;
+      if (duplicateMap.has(dupKey)) {
+        const prevIdx = duplicateMap.get(dupKey);
+        warnings.push(`第${rowNum}行: 同单重复条码 - 与第${prevIdx}行在同一收货地址+供应商下都是 ${sku} ${normalizedSize}，合并成一行还是删除一行？`);
+      } else {
+        duplicateMap.set(dupKey, rowNum);
+      }
     }
 
     if (rowFixes.length > 0) {
