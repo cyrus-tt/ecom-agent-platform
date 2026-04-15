@@ -107,6 +107,7 @@
 
 - 会话鉴权与 `/api/auth/*`
 - Agent 相关接口
+  - `GET /api/agent/context`
   - `POST /api/agent/run`
   - `GET /api/agent/reports`
   - `GET /api/agent/reports/:id`
@@ -160,6 +161,35 @@ AI 分析依赖 DeepSeek 配置：
 
 管理员也可以在前端的“AI 设置”中把 Key 临时写入当前网关进程内存，但该配置在网关重启后会失效。
 
+## Agent 数据模式
+
+为了支持 Mac 开发 Agent、Windows 跑真实集成，Analysis 上下文读取已经抽象成三种模式：
+
+- `local`
+  - 直接读取本地 PostgreSQL 和现有 service
+  - 适合 Windows 真实环境
+- `remote`
+  - 请求另一台机器暴露的只读聚合接口 `GET /api/agent/context`
+  - 适合 Mac 联调公司 Windows
+- `fixture`
+  - 直接读取本地 JSON fixture
+  - 适合 Mac 本地开发、测试和 eval
+
+推荐配置示例：
+
+```env
+AGENT_DATA_MODE=remote
+AGENT_REMOTE_BASE_URL=http://<windows-ip>:3000
+AGENT_REMOTE_READ_TOKEN=<your-read-token>
+```
+
+如果只做本地开发：
+
+```env
+AGENT_DATA_MODE=fixture
+AGENT_FIXTURE_PATH=apps/gateway/fixtures/analysis-context.sample.json
+```
+
 ## 环境变量与兼容策略
 
 推荐使用的新环境变量：
@@ -169,6 +199,10 @@ AI 分析依赖 DeepSeek 配置：
 - `ARRIVAL_PROJECT_DIR`
 - `NOTES_PROJECT_DIR`
 - `PSQL_BIN`
+- `AGENT_DATA_MODE`
+- `AGENT_REMOTE_BASE_URL`
+- `AGENT_REMOTE_READ_TOKEN`
+- `AGENT_FIXTURE_PATH`
 - `DEEPSEEK_API_KEY`
 - `DEEPSEEK_BASE_URL`
 - `DEEPSEEK_MODEL`

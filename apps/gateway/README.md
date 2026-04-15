@@ -45,6 +45,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\..\ops\windows\start_all.p
 - `ARRIVAL_PROJECT_DIR`
 - `NOTES_PROJECT_DIR`
 - `PSQL_BIN`
+- `AGENT_DATA_MODE`
+- `AGENT_REMOTE_BASE_URL`
+- `AGENT_REMOTE_READ_TOKEN`
+- `AGENT_FIXTURE_PATH`
 - `DEEPSEEK_API_KEY`
 - `DEEPSEEK_BASE_URL`
 - `DEEPSEEK_MODEL`
@@ -71,6 +75,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\..\ops\windows\start_all.p
   - `GET /readyz`
   - `GET /api/health`
 - Agent 分析：
+  - `GET /api/agent/context`
   - `GET /api/agent/skills`
   - `POST /api/agent/run`
   - `GET /api/agent/reports`
@@ -88,3 +93,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\..\ops\windows\start_all.p
 - 不动 `analysis_reports` 表结构和历史报告链路
 - 不改现有页面路由
 - 不改现有权限模型
+
+## Agent 数据模式
+
+Agent 上下文读取支持三种模式：
+
+- `local`
+  - 本地直接查 PostgreSQL 和现有 service
+- `remote`
+  - 去另一台网关请求 `GET /api/agent/context`
+- `fixture`
+  - 直接读取本地 JSON fixture
+
+这三种模式通过以下配置控制：
+
+```env
+AGENT_DATA_MODE=local
+AGENT_REMOTE_BASE_URL=http://127.0.0.1:3000
+AGENT_REMOTE_READ_TOKEN=
+AGENT_FIXTURE_PATH=apps/gateway/fixtures/analysis-context.sample.json
+```

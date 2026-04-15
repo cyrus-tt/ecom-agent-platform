@@ -11,6 +11,7 @@ const reportRepo = require("./services/reportRepo");
 const metricsService = require("./services/metricsService");
 const agentService = require("./services/agentService");
 const agentSkills = require("./services/agentSkills");
+const analysisContextProvider = require("./services/analysisContextProvider");
 const appConfig = require("./services/appConfig");
 const runtimeSecrets = require("./services/runtimeSecrets");
 
@@ -778,6 +779,7 @@ function isPublicPath(pathname) {
   return (
     pathname === "/login" ||
     pathname === "/api/auth/login" ||
+    pathname === "/api/agent/context" ||
     pathname === "/healthz" ||
     pathname === "/readyz" ||
     pathname === "/favicon.ico" ||
@@ -844,6 +846,33 @@ function requireAdmin(req, res, next) {
     return next();
   }
   return denyPermission(req, res, "admin");
+}
+
+function hasAgentReadToken(req) {
+  const configured = String(appConfig.agentRemoteReadToken || "").trim();
+  if (!configured) {
+    return false;
+  }
+  const authorization = String(req.headers.authorization || "").trim();
+  const bearerToken = authorization.toLowerCase().startsWith("bearer ")
+    ? authorization.slice(7).trim()
+    : "";
+  const headerToken = String(req.headers["x-agent-read-token"] || "").trim();
+  return bearerToken === configured || headerToken === configured;
+}
+
+function requireAgentContextAccess(req, res, next) {
+  if (accountHasPermission(req.authSession, "analysis")) {
+    return next();
+  }
+  if (hasAgentReadToken(req)) {
+    return next();
+  }
+  return res.status(401).json({
+    ok: false,
+    message: "Unauthorized",
+    login: "/login",
+  });
 }
 
 function resolvePostLoginRoute(account, rawNext) {
@@ -1093,6 +1122,47 @@ async function getNotesServiceStatus() {
     project_dir_configured: appConfig.notesProjectDirConfigured,
     project_dir_source: appConfig.notesProjectDirSource,
   };
+}
+
+async function refreshArrivalViaUpstream(timeoutMs = 600000) {
+  const targetUrl = new URL("/api/refresh", ARRIVAL_BASE);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs) || 600000));
+  try {
+    const upstream = await fetch(targetUrl, {
+      method: "POST",
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    const bodyText = await upstream.text();
+    let bodyData = null;
+    try {
+      bodyData = bodyText ? JSON.parse(bodyText) : null;
+    } catch (_err) {
+      bodyData = bodyText || null;
+    }
+    return {
+      ok: upstream.ok,
+      status: upstream.status,
+      data: bodyData,
+      message:
+        (bodyData && typeof bodyData === "object" && bodyData.message) ||
+        (typeof bodyData === "string" ? bodyData : "") ||
+        `${upstream.status} ${upstream.statusText}`.trim(),
+      target: targetUrl.toString(),
+    };
+  } catch (err) {
+    const message = String(err && err.message ? err.message : err);
+    return {
+      ok: false,
+      status: 502,
+      data: null,
+      message: message || "arrival refresh request failed",
+      target: targetUrl.toString(),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function startManagedJob(spec) {
@@ -1701,15 +1771,34 @@ app.get("/api/ping", (req, res) => {
   });
 });
 
-app.post("/api/admin/refresh-arrival", requireAdmin, (req, res) => {
+app.post("/api/admin/refresh-arrival", requireAdmin, async (req, res) => {
   try {
     const autoStartState = getArrivalAutoStartState();
     if (!autoStartState.ready) {
-      return res.status(503).json({
-        ok: false,
-        message: autoStartState.message,
-        target: ARRIVAL_BASE,
-        auto_start: autoStartState,
+      const arrivalStatus = await getArrivalServiceStatus({ allowAutoStart: false });
+      if (!arrivalStatus.ok) {
+        return res.status(503).json({
+          ok: false,
+          message: autoStartState.message,
+          target: ARRIVAL_BASE,
+          auto_start: autoStartState,
+        });
+      }
+      const upstreamRefresh = await refreshArrivalViaUpstream(600000);
+      if (!upstreamRefresh.ok) {
+        return res.status(upstreamRefresh.status || 502).json({
+          ok: false,
+          message: `arrival refresh failed: ${upstreamRefresh.message}`,
+          target: upstreamRefresh.target,
+          upstream: upstreamRefresh.data,
+        });
+      }
+      return res.json({
+        ok: true,
+        mode: "upstream",
+        message: "arrival refresh completed",
+        target: upstreamRefresh.target,
+        upstream: upstreamRefresh.data,
       });
     }
     const result = startManagedJob({
@@ -2156,6 +2245,20 @@ app.get("/api/agent/skills", requirePermission("analysis"), (_req, res) => {
     default_skill_id: agentSkills.DEFAULT_SKILL_ID,
     items: agentSkills.listSkills(),
   });
+});
+
+app.get("/api/agent/context", requireAgentContextAccess, async (req, res, next) => {
+  try {
+    const payload = await analysisContextProvider.getContext({
+      period_type: req.query.period_type,
+      start_date: req.query.start_date,
+      end_date: req.query.end_date,
+    });
+    return res.json(payload);
+  } catch (err) {
+    next(err);
+    return null;
+  }
 });
 
 app.post("/api/agent/run", requirePermission("analysis"), express.json({ limit: "1mb" }), async (req, res, next) => {

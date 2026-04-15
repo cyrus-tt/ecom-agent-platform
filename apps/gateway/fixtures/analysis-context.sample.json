@@ -1,0 +1,109 @@
+{
+  "metrics": {
+    "period": {
+      "type": "week",
+      "start": "2026-03-17",
+      "end": "2026-03-23",
+      "comparison_start": "2026-03-10",
+      "comparison_end": "2026-03-16",
+      "days": 7
+    },
+    "current": {
+      "gmv": 1285300.5,
+      "qty": 18420,
+      "sell_through": 0.3125,
+      "discount_rate": 0.736,
+      "avg_order_value": 69.7785,
+      "item_count": 842,
+      "inventory_qty": 58940
+    },
+    "comparison": {
+      "gmv": 1198800.2,
+      "qty": 17610,
+      "sell_through": 0.2981,
+      "discount_rate": 0.742,
+      "avg_order_value": 68.075,
+      "item_count": 817,
+      "inventory_qty": 59070
+    },
+    "changes": {
+      "gmv_pct": 0.072158,
+      "qty_pct": 0.045997,
+      "sell_through_pct": 0.048307,
+      "discount_rate_pct": -0.008086,
+      "avg_order_value_pct": 0.025026,
+      "item_count_pct": 0.0306
+    },
+    "category_structure": [
+      {
+        "category": "跑步",
+        "gmv": 432100,
+        "inventory_qty": 15400,
+        "gmv_share_pct": 0.336177,
+        "inventory_share_pct": 0.261283
+      },
+      {
+        "category": "训练",
+        "gmv": 288900,
+        "inventory_qty": 13280,
+        "gmv_share_pct": 0.224766,
+        "inventory_share_pct": 0.225314
+      }
+    ],
+    "rising_categories": [
+      {
+        "category": "跑步",
+        "gmv": 432100,
+        "gmv_prev": 398200,
+        "gmv_chg_pct": 0.085133
+      }
+    ],
+    "falling_categories": [
+      {
+        "category": "户外",
+        "gmv": 102500,
+        "gmv_prev": 116300,
+        "gmv_chg_pct": -0.118659
+      }
+    ],
+    "stockout_risk_summary": {
+      "high_risk_count": 6,
+      "medium_risk_count": 18,
+      "top_categories": [
+        "跑步",
+        "训练"
+      ]
+    },
+    "slow_movers_summary": {
+      "high_risk_count": 9,
+      "medium_risk_count": 22,
+      "top_categories": [
+        "户外",
+        "休闲"
+      ]
+    },
+    "has_data": true,
+    "summary": {
+      "period_type": "week",
+      "period_start": "2026-03-17",
+      "period_end": "2026-03-23",
+      "comparison_start": "2026-03-10",
+      "comparison_end": "2026-03-16",
+      "current_gmv": 1285300.5,
+      "current_qty": 18420,
+      "current_sell_through": 0.3125,
+      "current_discount_rate": 0.736
+    }
+  },
+  "recent_reports": [
+    {
+      "id": 101,
+      "period_type": "week",
+      "period_start": "2026-03-10",
+      "period_end": "2026-03-16",
+      "skill_name": "经营总览",
+      "status": "success",
+      "created_at": "2026-03-17T09:10:00.000Z"
+    }
+  ]
+}

@@ -1,10 +1,10 @@
 {
-  "generated_at": "2026-03-24 09:04:42",
+  "generated_at": "2026-04-14 09:29:48",
   "inventory_sources": [
-    "D:\\桌面\\ecom-agent-platform\\data\\inbox\\分配池库存日结(安踏大货)_SQL_20260324.csv"
+    "D:\\桌面\\ecom-agent-platform\\data\\inbox\\分配池库存日结(安踏大货)_SQL_20260414.csv"
   ],
   "sales_sources": [
-    "D:\\桌面\\ecom-agent-platform\\data\\inbox\\日商品销售明细(ANTA)_SQL SEVER_20260323至20260323.csv"
+    "D:\\桌面\\ecom-agent-platform\\data\\inbox\\日商品销售明细(ANTA)_SQL SEVER_20260413至20260413.csv"
   ],
   "prepared_files": [
     "D:\\桌面\\ecom-agent-platform\\data\\prepared\\inventory_latest.csv",
@@ -12,17 +12,17 @@
   ],
   "source_state": {
     "inventory": {
-      "path": "D:\\桌面\\ecom-agent-platform\\data\\inbox\\分配池库存日结(安踏大货)_SQL_20260324.csv",
-      "size": 9738619,
-      "mtime_ns": 1774314236000000000
+      "path": "D:\\桌面\\ecom-agent-platform\\data\\inbox\\分配池库存日结(安踏大货)_SQL_20260414.csv",
+      "size": 9163296,
+      "mtime_ns": 1776130052000000000
     },
     "sales": [
       {
         "source_type": "csv",
         "sheet_name": null,
-        "path": "D:\\桌面\\ecom-agent-platform\\data\\inbox\\日商品销售明细(ANTA)_SQL SEVER_20260323至20260323.csv",
-        "size": 3976176,
-        "mtime_ns": 1774314222000000000
+        "path": "D:\\桌面\\ecom-agent-platform\\data\\inbox\\日商品销售明细(ANTA)_SQL SEVER_20260413至20260413.csv",
+        "size": 3941908,
+        "mtime_ns": 1776130098000000000
       }
     ],
     "mapping": {
@@ -37,8 +37,8 @@
     }
   },
   "row_counts": {
-    "inventory_rows": 275318,
-    "sales_rows": 57920,
+    "inventory_rows": 260435,
+    "sales_rows": 57178,
     "inventory_map_rows": 529,
     "sales_map_rows": 425,
     "product_rows": 47305

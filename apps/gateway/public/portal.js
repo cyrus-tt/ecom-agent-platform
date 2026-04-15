@@ -99,7 +99,12 @@
       setStatus(el.jobStatus, "任务启动中...", "");
       const data = await api(url, { method: "POST" });
       if (!data.job || !data.job.id) {
-        throw new Error("任务返回异常");
+        const message = data.message || "任务执行完成";
+        setStatus(el.jobStatus, message, "ok");
+        renderJobLog([]);
+        disableJobButtons(false);
+        refreshHealth();
+        return;
       }
 
       activeJobId = data.job.id;
