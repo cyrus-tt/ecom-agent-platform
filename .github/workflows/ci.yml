@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [feature/dispatch-agent, main]
+  push:
+    branches: [feature/dispatch-agent]
+
+jobs:
+  validate:
+    name: Validate (Node 20 / Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            apps/gateway/package-lock.json
+            apps/web/package-lock.json
+
+      - name: Install gateway deps
+        run: npm --prefix apps/gateway ci
+
+      - name: Install web deps
+        run: npm --prefix apps/web ci
+
+      - name: Gateway syntax check
+        run: node --check apps/gateway/server.js
+
+      - name: Build web
+        run: npm --prefix apps/web run build
+
+      - name: Run tests
+        run: npm test
