@@ -1,0 +1,24 @@
+{
+  "username": "smoke-admin",
+  "password_hash": "bc640ff664a0d53c3f839da179fff0f35925939ff1f49068ef88a6855552d6da",
+  "session_ttl_seconds": 3600,
+  "cookie_name": "smoke_sid",
+  "accounts": [
+    {
+      "id": "acct_smoke_admin",
+      "name": "Smoke Admin",
+      "username": "smoke-admin",
+      "password_hash": "bc640ff664a0d53c3f839da179fff0f35925939ff1f49068ef88a6855552d6da",
+      "is_admin": true,
+      "permissions": ["portal", "report_daily", "arrival", "dashboard", "channel_dashboard", "analysis", "dispatch"]
+    },
+    {
+      "id": "acct_smoke_user",
+      "name": "Smoke User",
+      "username": "smoke-user",
+      "password_hash": "2e5b98fa491859fb52e7c85c6f26cd2546feda484d9d403c5731fd976afdefd3",
+      "is_admin": false,
+      "permissions": ["portal", "report_daily"]
+    }
+  ]
+}

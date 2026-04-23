@@ -26,8 +26,12 @@ const PUBLIC_DIR = path.join(BASE_DIR, "public");
 const PROJECT_ROOT = path.resolve(BASE_DIR, "..", "..");
 const WEB_DIST_DIR = process.env.WEB_DIST_DIR || path.join(PROJECT_ROOT, "apps", "web", "dist");
 const WEB_INDEX_PATH = path.join(WEB_DIST_DIR, "index.html");
-const AUTH_CONFIG_DEFAULT_PATH = path.join(BASE_DIR, "config", "auth.json");
-const AUTH_CONFIG_LOCAL_PATH = path.join(BASE_DIR, "config", "auth.local.json");
+const AUTH_CONFIG_DEFAULT_PATH = process.env.AUTH_CONFIG_PATH
+  ? path.resolve(process.env.AUTH_CONFIG_PATH)
+  : path.join(BASE_DIR, "config", "auth.json");
+const AUTH_CONFIG_LOCAL_PATH = process.env.AUTH_CONFIG_LOCAL_PATH
+  ? path.resolve(process.env.AUTH_CONFIG_LOCAL_PATH)
+  : path.join(BASE_DIR, "config", "auth.local.json");
 const AUTH_CONFIG_BACKUP_PATH = path.join(BASE_DIR, "runtime", "auth_config_backup.json");
 const ARRIVAL_BASE = appConfig.arrivalServiceUrl;
 const NOTES_BASE = appConfig.notesServiceUrl;

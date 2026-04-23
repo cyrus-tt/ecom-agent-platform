@@ -12,7 +12,7 @@
     "start:gateway": "npm --prefix apps/gateway run start",
     "dev:gateway": "npm --prefix apps/gateway run dev",
     "dev:web": "npm --prefix apps/web run dev",
-    "test": "node -e \"console.log('No automated tests configured yet.')\"",
+    "test": "npm --prefix apps/gateway test",
     "ops:start:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\ops\\windows\\start_all.ps1",
     "ops:stop:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\ops\\windows\\stop_all.ps1",
     "ops:refresh:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\ops\\windows\\run_pg_pipeline.ps1",
