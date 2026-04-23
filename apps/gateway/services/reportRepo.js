@@ -3,6 +3,9 @@
 const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
+const { childLogger } = require("../lib/logger");
+
+const log = childLogger("reportRepo");
 
 const BASE_DIR = path.resolve(__dirname, "..");
 const CONFIG_PATH = path.join(BASE_DIR, "config.json");
@@ -604,7 +607,7 @@ async function timedQuery(pool, queryText, values, tag) {
     const elapsedMs = Date.now() - startedAt;
     if (elapsedMs > SLOW_SQL_THRESHOLD_MS) {
       const label = tag ? `[${tag}]` : "";
-      console.warn(`[reportRepo][slow-sql]${label} ${elapsedMs}ms ${compactSqlText(queryText)}`);
+      log.warn({ tag, elapsedMs, sql: compactSqlText(queryText) }, `[slow-sql]${label} ${elapsedMs}ms`);
     }
   }
 }

@@ -15,6 +15,8 @@ const analysisContextProvider = require("./services/analysisContextProvider");
 const appConfig = require("./services/appConfig");
 const runtimeSecrets = require("./services/runtimeSecrets");
 const dispatchModule = require("./services/dispatch");
+const { childLogger } = require("./lib/logger");
+const log = childLogger("server");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -926,7 +928,7 @@ function appendArrivalServiceLog(streamName, chunk) {
     .filter((line) => line.length > 0);
   lines.forEach((line) => {
     ARRIVAL_SERVICE_LAST_ERROR = line;
-    console.log(`[arrival-service:${streamName}] ${line}`);
+    log.info({ arrivalStream: streamName }, line);
   });
 }
 
@@ -2478,35 +2480,38 @@ function startServer() {
   return app.listen(port, host, () => {
     const ips = getLanIps();
     const lanHint = ips.length ? ips.map((ip) => `http://${ip}:${port}`).join(" | ") : "N/A";
-    console.log(`Gateway started on ${host}:${port}`);
-    console.log(`LAN URLs: ${lanHint}`);
+    log.info({ host, port }, `Gateway started on ${host}:${port}`);
+    log.info({ lanHint }, `LAN URLs: ${lanHint}`);
 
     // Warm up default report payload to reduce first-screen latency.
     setTimeout(async () => {
       try {
         const { defaultWeek } = await reportRepo.getWeekChoices();
         if (!defaultWeek) {
-          console.warn("[warmup] report skipped: no default week");
+          log.warn("[warmup] report skipped: no default week");
         } else {
           await reportRepo.getReportMeta(defaultWeek);
           await reportRepo.getReportRows({ week: defaultWeek, page: 1, pageSize: 50, keyword: "" });
-          console.log(`[warmup] report cache ready for ${defaultWeek}`);
+          log.info({ defaultWeek }, `[warmup] report cache ready for ${defaultWeek}`);
         }
       } catch (err) {
         const msg = String(err && err.message ? err.message : err);
-        console.warn(`[warmup] report cache failed: ${msg}`);
+        log.warn({ err: msg }, `[warmup] report cache failed: ${msg}`);
       }
       try {
         const dashboardDates = await reportRepo.getDashboardDateChoices();
         if (!dashboardDates.default_date_from || !dashboardDates.default_date_to) {
-          console.warn("[warmup] dashboard skipped: no default range");
+          log.warn("[warmup] dashboard skipped: no default range");
           return;
         }
         await reportRepo.getDashboardOverview("", dashboardDates.default_date_from, dashboardDates.default_date_to);
-        console.log(`[warmup] dashboard cache ready for ${dashboardDates.default_date_from}~${dashboardDates.default_date_to}`);
+        log.info(
+          { from: dashboardDates.default_date_from, to: dashboardDates.default_date_to },
+          `[warmup] dashboard cache ready for ${dashboardDates.default_date_from}~${dashboardDates.default_date_to}`
+        );
       } catch (err) {
         const msg = String(err && err.message ? err.message : err);
-        console.warn(`[warmup] dashboard cache failed: ${msg}`);
+        log.warn({ err: msg }, `[warmup] dashboard cache failed: ${msg}`);
       }
     }, 200);
   });

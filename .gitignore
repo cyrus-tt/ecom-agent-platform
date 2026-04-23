@@ -3,6 +3,7 @@ dist/
 build/
 runtime/pids/
 runtime/*.log
+runtime/logs/
 data/dispatch/
 .env
 .env.local

@@ -2,6 +2,9 @@
 
 const fs = require("fs");
 const path = require("path");
+const { childLogger } = require("../../lib/logger");
+
+const log = childLogger("dispatch.taskStore");
 
 let Database;
 try {
@@ -36,7 +39,7 @@ function init() {
     // 尝试备份损坏文件
     const backup = `${dbPath}.corrupt.${Date.now()}`;
     try { fs.renameSync(dbPath, backup); } catch {}
-    console.warn(`[dispatch] tasks.db 损坏已备份 -> ${backup}: ${err.message}`);
+    log.warn({ backup, err: err.message }, `tasks.db 损坏已备份 -> ${backup}: ${err.message}`);
     db = new Database(dbPath);
   }
   db.pragma("journal_mode = WAL");
