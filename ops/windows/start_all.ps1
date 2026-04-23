@@ -4,12 +4,54 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Resolve-NodeRuntime([string]$RootDir) {
+  $candidates = @()
+  if (-not [string]::IsNullOrWhiteSpace($env:NODE_BIN)) {
+    $candidates += $env:NODE_BIN
+  }
+  $candidates += (Join-Path $RootDir "tools\node-v20.20.2-win-x64\node.exe")
+
+  foreach ($candidate in @($candidates)) {
+    if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+    if (Test-Path $candidate) {
+      return (Resolve-Path $candidate).Path
+    }
+  }
+
+  $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+  if ($nodeCommand -and -not [string]::IsNullOrWhiteSpace($nodeCommand.Source)) {
+    return $nodeCommand.Source
+  }
+  throw "node runtime not found. Set NODE_BIN or place Node 20 under tools/node-v20.20.2-win-x64."
+}
+
+function Resolve-NpmCli([string]$NodeBin) {
+  if (-not [string]::IsNullOrWhiteSpace($env:NPM_CLI) -and (Test-Path $env:NPM_CLI)) {
+    return (Resolve-Path $env:NPM_CLI).Path
+  }
+
+  $nodeDir = Split-Path -Parent $NodeBin
+  $npmFromNode = Join-Path $nodeDir "npm.cmd"
+  if (Test-Path $npmFromNode) {
+    return (Resolve-Path $npmFromNode).Path
+  }
+
+  $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
+  if ($npmCommand -and -not [string]::IsNullOrWhiteSpace($npmCommand.Source)) {
+    return $npmCommand.Source
+  }
+
+  throw "npm.cmd not found. Set NPM_CLI or ensure npm is available."
+}
+
 $root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $gatewayDir = Join-Path $root "apps\gateway"
 $webDir = Join-Path $root "apps\web"
 $webDistIndex = Join-Path $webDir "dist\index.html"
 $pidDir = Join-Path $root "runtime\pids"
 $desktopDir = Split-Path -Path $root -Parent
+$nodeBin = Resolve-NodeRuntime -RootDir $root
+$npmCli = Resolve-NpmCli -NodeBin $nodeBin
 $arrivalServiceUrl = if ($env:ARRIVAL_SERVICE_URL) { $env:ARRIVAL_SERVICE_URL } elseif ($env:ARRIVAL_BASE) { $env:ARRIVAL_BASE } else { "http://127.0.0.1:5188" }
 $notesServiceUrl = if ($env:NOTES_SERVICE_URL) { $env:NOTES_SERVICE_URL } elseif ($env:NOTES_BASE) { $env:NOTES_BASE } else { "http://127.0.0.1:5190" }
 $arrivalUri = [System.Uri]$arrivalServiceUrl
@@ -152,7 +194,7 @@ if ($RebuildWeb -or -not (Test-Path $webDistIndex)) {
   Write-Host "[BUILD] React web"
   Push-Location $webDir
   try {
-    npm run build
+    & $npmCli run build
   }
   finally {
     Pop-Location
@@ -170,10 +212,11 @@ Wait-PortReady -Port $arrivalPort -Name "arrival service" | Out-Null
 Start-ServiceProcess -Name "notes API" -FilePath "python" -ArgumentList @("notes_api.py", "--config", "notes_api.config.json") -WorkingDirectory $notesDir -PidFile (Join-Path $pidDir "notes.pid") | Out-Null
 Wait-PortReady -Port $notesPort -Name "notes API" | Out-Null
 
-Start-ServiceProcess -Name "gateway" -FilePath "node" -ArgumentList @("server.js") -WorkingDirectory $gatewayDir -PidFile (Join-Path $pidDir "gateway.pid") | Out-Null
+Start-ServiceProcess -Name "gateway" -FilePath $nodeBin -ArgumentList @("server.js") -WorkingDirectory $gatewayDir -PidFile (Join-Path $pidDir "gateway.pid") | Out-Null
 Wait-PortReady -Port 3000 -Name "gateway" | Out-Null
 
 Write-Host ""
 Write-Host "Services started."
 Write-Host "URL: http://localhost:3000/"
+Write-Host "Node runtime: $nodeBin"
 Write-Host "PID files: $pidDir"

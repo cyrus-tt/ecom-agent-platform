@@ -17,6 +17,7 @@
     "ops:stop:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\ops\\windows\\stop_all.ps1",
     "ops:refresh:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\ops\\windows\\run_pg_pipeline.ps1",
     "ops:start:saas": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\ops\\windows\\start_saas_core.ps1",
-    "ops:stop:saas": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\ops\\windows\\stop_saas_core.ps1"
+    "ops:stop:saas": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\ops\\windows\\stop_saas_core.ps1",
+    "ops:smoke:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\smoke_all_modules.ps1 -OutputPath .\\runtime\\smoke-last.json"
   }
 }
