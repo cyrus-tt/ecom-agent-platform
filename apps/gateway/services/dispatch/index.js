@@ -3,8 +3,12 @@
 const routes = require("./routes");
 
 function isEnabled() {
-  const v = String(process.env.DISPATCH_AGENT_ENABLED || "false").trim().toLowerCase();
-  return v === "true" || v === "1" || v === "yes";
+  const raw = String(process.env.DISPATCH_AGENT_ENABLED || "").trim().toLowerCase();
+  if (!raw) {
+    // Dispatch is now a built-in SaaS module and defaults to enabled.
+    return true;
+  }
+  return !(raw === "false" || raw === "0" || raw === "no" || raw === "off");
 }
 
 function tryRegister(app, ctx) {
