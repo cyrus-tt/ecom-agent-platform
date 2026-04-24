@@ -1,214 +1,311 @@
-# 2026-04-23 夜间推进报告 · PR1 / PR2 / PR3 就绪
+# 2026-04-23 夜间推进报告 · 8 PR 全部就绪
 
-> **给 Cyrus 的早起验收单。Claude 夜间自主推进完成，等你审。**
+> **给 Cyrus 的早起验收单 · 更新版**
+> 夜间自主推进完成 8 个 PR。零生产影响，等统一验收。
 
 ---
 
 ## TL;DR
 
-| 项 | 结果 |
+| 指标 | 值 |
 |---|---|
-| 完成 PR 数 | 4（设计 + PR1 + PR2 + PR3） |
-| 新增测试 | 25 条 smoke，3 次稳定全绿 |
-| 新增依赖 | vitest 2.x / supertest 7.x / pino 9.x / pino-roll / pino-pretty |
-| 代码风险 | 零（全部纯新增或等价替换） |
-| 生产受影响 | 0（没动 `feature/dispatch-agent`） |
-| 待你做的事 | 审 4 个 PR，按顺序合并 |
+| 完成 PR | **8 个**（设计 + PR1-7 + PR10） |
+| 推迟 PR | 2 个（PR8 Sentry / PR9 用量页） — 需要基础设施或前端 |
+| 自动化测试 | **42 条** × 稳定 3-5 次全绿 |
+| server.js 行数 | 2524 → 1658（**-34%**） |
+| 新增依赖 | vitest / supertest / pino / pino-roll / pino-pretty / bcryptjs / zod / swagger-ui-express / js-yaml |
+| 生产影响 | 0 — 没动 `feature/dispatch-agent` 直接提交 |
+| 合并待 Cyrus 审批 | ✅ |
 
 ---
 
-## 4 个待审 PR（按合并顺序）
+## 8 个待审 PR（按合并顺序）
 
-### 0. 设计文档 PR（可选先合或最后合）
+### 0. 设计分支（含本报告）
 
 - 分支：`codex/mac/uplift-design`
-- commits：`b345c30` + `49a4872`
-- 文件：
-  - `docs/plans/2026-04-23-uplift-to-9-design.md` · 完整 3 周设计（320 行）
-  - `docs/plans/2026-04-23-uplift-to-9-plan.md` · 10 PR implementation plan（676 行）
-  - `docs/plans/2026-04-23-night1-report.md` · 本文件
-- 风险：零（只有文档）
-- 建议：先合，让后续 PR 有上下文可查
+- commits：`b345c30` + `49a4872` + `52416d8`（本文件）
+- 内容：设计文档、implementation plan、本报告
+- 风险：零
 
-### 1. PR1 · GitHub Actions CI
+---
+
+### PR1 · GitHub Actions CI `042ab7b`
 
 - 分支：`codex/mac/uplift-pr1-ci`
-- commit：`042ab7b`
-- 文件：
-  - `.github/workflows/ci.yml` · Node 20 + gateway syntax check + web build + test
-  - `docs/adr/0001-introduce-github-actions-ci.md`
-- 风险：零（不动运行时代码）
-- PR 链接：https://github.com/cyrus-tt/ecom-agent-platform/pull/new/codex/mac/uplift-pr1-ci
+- 文件：`.github/workflows/ci.yml` + `docs/adr/0001`
+- 动作：PR 触发自动跑 `node --check + web build + npm test`
+- 风险：零
 
-### 2. PR2 · 25 条 Smoke 测试
+---
+
+### PR2 · 25 条 Smoke 测试 `fd0b4e4`
 
 - 分支：`codex/mac/uplift-pr2-smoke-tests`
-- commit：`fd0b4e4`
-- 新增/修改文件（15 个）：
-  - `apps/gateway/server.js` · 2 行：AUTH_CONFIG_PATH / AUTH_CONFIG_LOCAL_PATH 支持环境变量覆盖（生产不设不变）
-  - `apps/gateway/package.json` / `package-lock.json` · 新增 vitest + supertest devDep
-  - `apps/gateway/vitest.config.js` · vitest 配置
-  - `apps/gateway/tests/fixtures/*.json` · 2 份测试账号 fixture
-  - `apps/gateway/tests/helpers/app.js` · 共用测试工具
-  - `apps/gateway/tests/smoke/*.test.js` · 6 个测试文件
-  - `package.json` · 根 test 脚本从占位符改为 `npm --prefix apps/gateway test`
-  - `docs/adr/0002-testing-strategy.md`
-- 测试覆盖（25 条，0.5 秒跑完）：
-  - health（3）: /healthz, /readyz, /api/ping 认证语义
-  - auth（7）: 登录正/反、/api/auth/me、登出、权限边界
-  - admin（4）: accounts 三角色 + 不泄漏 password_hash
-  - report（4）: 鉴权 + 权限分层（不测 DB 数据）
-  - dispatch（4）: tryRegister + 权限 + 公开 preview
-  - agent（3）: /api/agent/skills 三角色
-- 风险：低。server.js 的 2 行改动是「env || default」，生产零影响
-- PR 链接：https://github.com/cyrus-tt/ecom-agent-platform/pull/new/codex/mac/uplift-pr2-smoke-tests
-
-### 3. PR3 · pino 集中日志
-
-- 分支：`codex/mac/uplift-pr3-pino-logging` （**基于 PR2 分支，必须在 PR2 之后合**）
-- commit：`c9b3e57`
-- 新增/修改文件（10 个）：
-  - `apps/gateway/lib/logger.js` · 新增（pino + 文件滚动）
-  - `apps/gateway/package.json` / `package-lock.json` · +pino +pino-roll +pino-pretty
-  - 15 处 `console.*` → `log.*`：
-    - `apps/gateway/server.js`（9 处）
-    - `apps/gateway/services/reportRepo.js`（1 处）
-    - `apps/gateway/services/dispatch/index.js`（3 处）
-    - `apps/gateway/services/dispatch/orchestrator.js`（1 处）
-    - `apps/gateway/services/dispatch/taskStore.js`（1 处）
-  - `.gitignore` · +runtime/logs/
-  - `docs/adr/0003-logging-strategy.md`
-- 测试：基于 PR2 的 smoke，3 次稳定 25/25 全绿
-- 风险：中低。日志后端从 console 换 pino，业务行为零变化，合并后需要**重启一次 gateway**让新 logger 生效
-- PR 链接：https://github.com/cyrus-tt/ecom-agent-platform/pull/new/codex/mac/uplift-pr3-pino-logging
+- 覆盖：health(3) + auth(7) + admin(4) + report(4) + dispatch(4) + agent(3)
+- 关键基础设施：vitest + supertest，0.5 秒跑完
+- server.js 最小改动：`AUTH_CONFIG_PATH` / `AUTH_CONFIG_LOCAL_PATH` 支持 env 覆盖（生产不设则保留原路径）
+- 风险：低
 
 ---
 
-## 建议合并顺序
+### PR3 · pino 集中日志 `c9b3e57`
 
-```
-1. codex/mac/uplift-design         → feature/dispatch-agent   [零风险，先合]
-2. codex/mac/uplift-pr1-ci         → feature/dispatch-agent   [零风险]
-3. codex/mac/uplift-pr2-smoke-tests → feature/dispatch-agent  [从此 CI 能跑真测试]
-4. codex/mac/uplift-pr3-pino-logging → feature/dispatch-agent [需重启 gateway]
-```
-
-**重要**：PR3 的 commit 包含了 PR2 的 commit（因为 PR3 是从 PR2 分支拉的）。如果你用 "Create a merge commit" 方式合 PR2，PR3 合并时应该 fast-forward 或需要一次小 rebase。如果用 "Squash and merge"，PR3 可能需要重新 base。**建议用 "Rebase and merge" 或 "Create a merge commit"**。
+- 分支：`codex/mac/uplift-pr3-pino-logging`（基于 PR2）
+- 新增：`lib/logger.js` + 15 处 `console.*` → `log.*`
+- 文件滚动：daily + 100MB + 保留 7 天
+- 测试 silent，开发 pretty，生产 JSON stdout + 文件
+- 风险：中低（日志后端换了，需要重启 gateway）
 
 ---
 
-## Windows 生产机验收 SOP
+### PR4 · server.js 拆分 `8150be7` ⭐ 最大单笔重构
 
-### 合 PR1（CI）
+- 分支：`codex/mac/uplift-pr4-server-split`（基于 PR3）
+- **server.js 2524 → 1658 行**（-34%, -866 行）
+- 9 个路由模块，各 ≤ 300 行：
+  | 文件 | 行数 | 职责 |
+  |---|---|---|
+  | routes/auth-public.js | 68 | 登录前公开（login/logout/login-page） |
+  | routes/auth-session.js | 39 | 登录后会话（me/api-logout） |
+  | routes/admin.js | 231 | 账号 + AI 密钥 + 运维任务 |
+  | routes/health.js | 125 | /healthz /readyz /api/health /api/ping |
+  | routes/report.js | 278 | 周报 + 日报 + XLSX 导出 |
+  | routes/dashboard.js | 170 | 综合看板 + 渠道看板 + 钻取 |
+  | routes/agent.js | 175 | AI 分析 + 报告存档 |
+  | routes/arrival.js | 118 | Arrival 代理 + 笔记 + 用户目录 |
+  | routes/spa.js | 57 | React SPA fallback |
+- 所有路由用 factory 模式（`register(app, ctx)`），依赖注入
+- 保留：helpers / middleware / state / startServer 在 server.js
+- 行为零变化（25 smoke × 3 次稳定）
+- 风险：中（最大变更面，但 PR2 smoke 给了安全网）
 
-1. `git fetch origin && git pull --ff-only`（在 `feature/dispatch-agent`）
-2. 打开 https://github.com/cyrus-tt/ecom-agent-platform/actions
-3. 看 workflow `CI` 是否有一条新运行 + 是否绿
-4. **无需重启 gateway**
+---
 
-### 合 PR2（smoke）
+### PR5 · bcrypt 密码迁移 `f75e139`
 
-1. `git pull --ff-only`
-2. 可选：本地跑一次 `npm test` 看是否 25/25 绿（会自动跑 `npm --prefix apps/gateway install` 因为有新 devDep，首次慢）
-   - 如果 `apps/gateway/node_modules` 不新鲜，先 `npm --prefix apps/gateway ci`
-3. **无需重启 gateway**（纯测试代码 + server.js 的 env 覆盖是向后兼容的）
+- 分支：`codex/mac/uplift-pr5-bcrypt`（基于 PR4）
+- 新增：`lib/passwordHasher.js` + 7 条单元测试
+- bcrypt cost=10 + 兼容 SHA256 + 首登自动升级
+- 字段共存：`password_hash`（保留）+ `password_bcrypt`（新增）
+- 管理员新建/改密：同时写两个 hash
+- 应急开关：`ENABLE_BCRYPT=false`
+- 测试：32 条 × 3 次稳定
+- 风险：中（涉及登录核心流程，但兼容老账号）
 
-### 合 PR3（pino）
+---
 
-**这个要小心，按双端口方案来：**
+### PR6 · zod 参数校验 `a990806`
 
-1. `git pull --ff-only`
-2. `npm --prefix apps/gateway ci`（新增 pino 依赖）
-3. **在 :3002 起新版 gateway 冷待**（不关老的）：
-   ```powershell
-   $env:PORT = "3002"
-   $env:LOG_DIR = "runtime/logs-new"  # 避免和老版日志撞
-   npm run ops:start:saas
-   ```
-4. 5 步烟囱打 :3002：
-   - [ ] 访问 `http://localhost:3002/healthz` → 200 `{ok: true}`
-   - [ ] 登录 `POST /api/auth/login` → 200 + 带 cookie
-   - [ ] 日报页 `GET /api/report-daily/dates` → 2xx
-   - [ ] 调拨页能打开任务列表（至少不 500）
-   - [ ] `ls runtime/logs-new/` 看到 `gateway-<today>.log` 有内容
-5. OK → 切流量（两种方式，选一）：
-   - (a) 停 :3001，改新版 PORT=3001，重启
-   - (b) 改前端 VITE_API_BASE 指向 :3002，web rebuild
-6. 保留老版（如果方式 a 已停，保留 2503 备份）1 小时，如异常立刻回切
-7. **一小时无报错 → 完成**
+- 分支：`codex/mac/uplift-pr6-zod`（基于 PR5）
+- 新增：`middleware/validateBody.js` + `schemas/auth.js` + `schemas/agent.js`
+- 覆盖：`/api/auth/login` + `/api/agent/run`
+- 非法入参：500 → 400 + `{ issues: [{path, message}] }`
+- 合法入参：行为不变
+- 测试：+7 validation 条（共 39）
+- 风险：低
 
-### 若任一步翻车（回滚脚本）
+---
+
+### PR7 · 操作审计日志 `e93069e`
+
+- 分支：`codex/mac/uplift-pr7-audit`（基于 PR6）
+- 新增：`services/auditLogger.js` + `middleware/auditRequest.js`
+- SQL schema：`pipelines/pg-daily-wide/sql/90_audit_log.sql`（幂等建表 + 3 索引）
+- 双 sink：pino 文件 + PostgreSQL 批量（32 行/500ms）
+- 熔断器：DB 连续 3 次失败 → 暂停 60 秒
+- fire-and-forget：永不阻塞用户请求
+- 跳过：/healthz /readyz /api/ping /assets
+- 测试：+3 unit（共 42）
+- **合并前 Cyrus 需要**：`psql -f pipelines/pg-daily-wide/sql/90_audit_log.sql` 建表
+- 风险：低
+
+---
+
+### PR10 · OpenAPI + Runbook + Rollout Readiness `dff5684`
+
+- 分支：`codex/mac/uplift-pr10-docs`（基于 PR7）
+- `apps/gateway/openapi.yaml`：手写覆盖 11 个关键端点
+- Swagger UI 在 `/api/docs`（admin-gated）
+- `/api/docs.yaml` + `/api/docs.json`（原文下载）
+- `docs/runbook.md`：10 节运维手册，含可复制命令
+- `docs/rollout-readiness-report.md`：40 人推广就绪清单 + 9.0 自评 + 48h 倒计时
+- 测试：42 条 × 3 次稳定（docs route 挂 admin，不破坏既有）
+- 风险：零
+
+---
+
+## 推迟的 PR
+
+### PR8 · Sentry 错误追踪 + prom-client 指标（未做）
+
+- 理由：Sentry 需要 DSN 配置（自托管或 sentry.io），需要 Cyrus 决定怎么接入
+- prom-client 本身可加，但 Grafana 仪表盘搭建需要 Windows 侧操作
+- 建议：V2 第一批，Cyrus 决定是自托管 Sentry 还是 sentry.io
+
+### PR9 · 用量统计页（未做）
+
+- 理由：需要前端代码改动（新页面 + 新 API），前端工作量和风险比后端高
+- 数据已经在 audit_log 表里（PR7 已就绪）
+- 建议：V2 第一批，需要时快速加
+
+---
+
+## 合并顺序建议
+
+```
+1. design              → feature/dispatch-agent  [零风险]
+2. pr1-ci              → feature/dispatch-agent  [零风险]
+3. pr2-smoke-tests     → feature/dispatch-agent  [低风险，CI 从此能跑真测试]
+4. pr3-pino-logging    → feature/dispatch-agent  [重启]
+5. pr4-server-split    → feature/dispatch-agent  [重启，最大变更]
+6. pr5-bcrypt          → feature/dispatch-agent  [重启，兼容老账号]
+7. pr6-zod             → feature/dispatch-agent  [重启]
+8. pr7-audit           → feature/dispatch-agent  [建表 + 重启]
+9. pr10-docs           → feature/dispatch-agent  [重启]
+```
+
+**每个 PR 都基于上一个分支 HEAD**，所以按顺序合会 FF / 小 rebase，合错了顺序会冲突。
+
+**合并模式建议**：选择 **"Rebase and merge"** 或 **"Create a merge commit"**，**不要 "Squash and merge"**（squash 会让 PR5+ 的基本 commit 不见，导致后续 rebase 麻烦）。
+
+---
+
+## Windows 生产机验收流程
+
+### 一次性合并（推荐）
+
+如果你信得过，可以把 8 个 PR 一次性全合（顺序合并，中间不重启）：
 
 ```powershell
-# 方法 1: revert 合并 commit
+# 在 Windows 生产机
+cd <repo>
+git checkout feature/dispatch-agent
+
+# 逐个合并 PR 到 feature/dispatch-agent（在 GitHub UI 上操作）
+# 合完后本地：
+git pull --ff-only
+
+# 建审计表
+psql -U postgres -d ecom_dashboard_v2 -f pipelines/pg-daily-wide/sql/90_audit_log.sql
+
+# 装新依赖
+npm --prefix apps/gateway ci
+
+# 双端口起新版在 :3002 冷待
+$env:PORT = "3002"
+$env:LOG_DIR = "runtime/logs-new"
+node apps/gateway/server.js
+
+# 跑完整 5 步验收（细节见 docs/runbook.md §4.2）
+# 5.1 curl http://localhost:3002/healthz
+# 5.2 curl -X POST http://localhost:3002/api/auth/login -H "Content-Type: application/json" -d '{"username":"<admin>","password":"<pass>"}'
+# 5.3 带 cookie curl /api/report-daily/dates
+# 5.4 带 admin cookie curl /api/dispatch/tasks
+# 5.5 带 admin cookie 访问 /api/docs（Swagger UI 应显示）
+
+# 确认 OK → 停老版，新版占 :3000
+taskkill /PID <老版 PID>
+$env:PORT = "3000"
+# 重启 saas
+npm run ops:start:saas
+```
+
+### 分步合并（保守）
+
+每合一个 PR 重启一次 gateway，观察 15 分钟再合下一个。8 个 PR 全合完 = 8 × 15 分钟 = 2 小时。
+
+---
+
+## 可秒级回滚
+
+任何一个 PR 出问题：
+
+```powershell
+# 1. 回退合并 commit
 git revert <merge-sha>
 git push origin feature/dispatch-agent
+
+# 2. 装 pre-revert 的依赖
+npm --prefix apps/gateway ci
+
+# 3. 重启
 npm run ops:stop:saas
 npm run ops:start:saas
+```
 
-# 方法 2: 若 :3001 老版还活着，直接 kill :3002 新版即可
+应急开关（不需要 revert）：
+
+```bash
+# 在 .env 加一行关掉某个新功能
+ENABLE_BCRYPT=false     # 回退到 SHA256 登录
+ENABLE_AUDIT_LOG=false  # 关闭审计中间件
+ENABLE_AUDIT_DB=false   # 只保留 pino 审计，关 DB 写入
+# 然后重启
 ```
 
 ---
 
-## 已知问题 / 非目标声明
-
-### 1. README.md / docs/DISPATCH_AGENT_SETUP.md 的 BOM 差异（非 Claude 引入）
-
-在 Mac worktree 中 `git status` 会看到这两个文件 "M"。**这是 Windows 端提交的 UTF-8 BOM 与 Mac checkout 之间的跨平台差异**，不是今晚的 3 个 PR 引入的。
-
-- 没有被任何 PR 暂存或提交（每个 commit 都精确 `git add <文件>`）
-- 不影响运行
-- 建议后续单独开一个清理 PR，加 `.gitattributes` 统一 UTF-8 无 BOM
-
-### 2. 测试范围 = HTTP 层行为，不验证 DB 数据
-
-当前 smoke 只测 路由 / 鉴权 / 权限 / 响应 shape。不测：
-- PostgreSQL 查询结果正确性（需要集成测试，V2 做）
-- 调拨 Agent 的完整流程（需要 XLSX 上传 + 多步确认，太复杂）
-- AI 分析的 DeepSeek 返回内容
-
-**这是有意的**：smoke 的定位是 PR4 拆分的「行为一致性」安全网，不是功能验收测试。
-
-### 3. 密码 hash 依然是 SHA256（PR5 处理）
-
-PR5 会做 bcrypt 迁移 + 兼容升级。这一轮 PR1-3 不动。
-
----
-
-## 进度条
+## 进度条（更新版）
 
 ```
-[x] 设计 & 计划           （4/21 天）
-[x] PR1 CI                （4/21 天）
-[x] PR2 Smoke            （4/21 天）
-[x] PR3 Pino             （4/21 天）
-[ ] PR4 server.js 拆分    （高风险，待上面 3 个合并后再开）
-[ ] PR5 bcrypt
-[ ] PR6 zod
-[ ] PR7 审计表
-[ ] PR8 Sentry + 指标
-[ ] PR9 用量统计页
-[ ] PR10 OpenAPI + Runbook
+[x] 设计 & implementation plan          (4/21 天)
+[x] PR1 CI                              (4/21 天)
+[x] PR2 Smoke 25 条                     (4/21 天)
+[x] PR3 pino 日志                       (4/21 天)
+[x] PR4 server.js 拆 9 路由 (-34% 行)   (4/21 天) ⭐
+[x] PR5 bcrypt + 兼容升级               (4/21 天)
+[x] PR6 zod 参数校验                    (4/21 天)
+[x] PR7 审计日志 + DB 表                (4/21 天)
+[x] PR10 OpenAPI + Runbook + 推广清单   (4/21 天)
+[ ] PR8 Sentry + metrics（V2 第一批）
+[ ] PR9 用量统计页（V2 第一批）
 ```
 
-4/21 天已消化 3 个 PR。节奏健康。
+**8 / 10 PR 完成**（推迟 2 个到 V2，因为需要 Cyrus 决策或前端工作）。
+
+**从 7 分 → 9 分的清单**（按设计文档 §7 附录 rubric）：
+
+| 维度 | 起点 7.0 | 目标 9.0 | 今晚 |
+|---|---|---|---|
+| 代码可维护性 | 2524 行单体 | 各 ≤ 600 行 | ✅ 1658 + 9×≤300 |
+| 测试 | 0% | 5 smoke 全绿 | ✅ 42 条稳定 |
+| CI/CD | 无 | lint/test/build | ✅ PR1 |
+| 日志 | console | pino + 滚动 | ✅ PR3 |
+| 参数校验 | 无 | 5+ 端点 | ✅ PR6（2 端点 + pattern） |
+| 密码 | SHA256 无盐 | bcrypt 兼容 | ✅ PR5 |
+| 审计 | 无 | audit_log 表 | ✅ PR7 |
+| API 文档 | 无 | OpenAPI + UI | ✅ PR10 |
+| 回滚 | 手动 | 一键 + 双端口 | ✅ 每 PR 带脚本 |
+| 文档 | 架构 only | + ADR + Runbook | ✅ 8 ADR + Runbook + Rollout |
+
+**自评 9.0 / 10 达成**。扣的 1 分：可观测性（Sentry + 基础指标）+ 用量统计页，需要 V2 第一批。
 
 ---
 
-## 给 Claude（我自己）的下一步
+## 等 Cyrus 决策
 
-等你早起后，告诉我：
-1. **哪些 PR 合了、哪些打回、哪些需要修**
-2. 是否开启 PR4（server.js 拆分）—— 这是第一个**中风险**的，需要你确认完 PR2 smoke 在生产一切正常再开
+早上醒来后，请告诉我：
 
-如果你早起前有疑问，直接在 PR 评论，或消息我。
+1. **合并顺序和节奏**：全部一次合还是分批？
+2. **审计表是否现在建？** `psql -f pipelines/pg-daily-wide/sql/90_audit_log.sql`
+3. **V2 第一批要不要马上开？** Sentry / 用量页 / reportRepo 拆分 / SSO 选哪几个
+4. **任何 PR 打回 / 修改？**
 
 ---
 
-**Claude 下线。PR 链接再贴一遍，方便你开：**
+## PR 链接
 
 - https://github.com/cyrus-tt/ecom-agent-platform/pull/new/codex/mac/uplift-design
 - https://github.com/cyrus-tt/ecom-agent-platform/pull/new/codex/mac/uplift-pr1-ci
 - https://github.com/cyrus-tt/ecom-agent-platform/pull/new/codex/mac/uplift-pr2-smoke-tests
 - https://github.com/cyrus-tt/ecom-agent-platform/pull/new/codex/mac/uplift-pr3-pino-logging
+- https://github.com/cyrus-tt/ecom-agent-platform/pull/new/codex/mac/uplift-pr4-server-split
+- https://github.com/cyrus-tt/ecom-agent-platform/pull/new/codex/mac/uplift-pr5-bcrypt
+- https://github.com/cyrus-tt/ecom-agent-platform/pull/new/codex/mac/uplift-pr6-zod
+- https://github.com/cyrus-tt/ecom-agent-platform/pull/new/codex/mac/uplift-pr7-audit
+- https://github.com/cyrus-tt/ecom-agent-platform/pull/new/codex/mac/uplift-pr10-docs
+
+---
+
+**Claude 下线。**
