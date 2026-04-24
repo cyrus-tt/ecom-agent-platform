@@ -21,6 +21,9 @@ module.exports = {
       AGENT_DATA_MODE: "fixture",
       DISPATCH_AGENT_ENABLED: "true",
       PORT: "0",
+      // Disable bcrypt auto-upgrade during tests: avoids slow bcrypt.hashSync
+      // on each fixture login and prevents writeJsonAtomic mutating the fixture.
+      ENABLE_BCRYPT: "false",
     },
     reporters: ["verbose"],
   },

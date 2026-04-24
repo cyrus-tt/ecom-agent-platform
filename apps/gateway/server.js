@@ -16,6 +16,7 @@ const appConfig = require("./services/appConfig");
 const runtimeSecrets = require("./services/runtimeSecrets");
 const dispatchModule = require("./services/dispatch");
 const { childLogger } = require("./lib/logger");
+const passwordHasher = require("./lib/passwordHasher");
 const log = childLogger("server");
 
 const app = express();
@@ -134,11 +135,13 @@ function normalizeAuthAccount(raw, fallbackUsername, fallbackPasswordHash, index
   if (!username || !/^[0-9a-f]{64}$/i.test(passwordHash)) {
     return null;
   }
+  const passwordBcrypt = String(raw.password_bcrypt || "").trim();
   return {
     id,
     name: String(raw.name || raw.display_name || username).trim() || username,
     username,
     password_hash: passwordHash,
+    password_bcrypt: passwordBcrypt,
     is_admin: raw.is_admin !== false,
     permissions: normalizePermissionKeys(raw.permissions, fallbackPermissions),
   };
@@ -368,6 +371,7 @@ function exportAuthConfig(authStore = getAuthStore()) {
       name: account.name,
       username: account.username,
       password_hash: account.password_hash,
+      password_bcrypt: account.password_bcrypt || "",
       is_admin: account.id === authStore.primary_admin_id,
       permissions: account.id === authStore.primary_admin_id ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account.permissions, []),
     })),
@@ -422,6 +426,7 @@ function cloneAccountForMutation(account) {
     name: account.name,
     username: account.username,
     password_hash: account.password_hash,
+    password_bcrypt: account.password_bcrypt || "",
     is_admin: account.is_admin === true,
     permissions: normalizePermissionKeys(account.permissions, []),
   };
@@ -462,6 +467,9 @@ function updateAuthStore(mutator) {
 
 function createManagedAccount({ name, password, permissions }) {
   const nextPassword = validateAccountPassword(password);
+  const bcryptHash = passwordHasher.isBcryptEnabled()
+    ? passwordHasher.hashForStorage(nextPassword)
+    : "";
   const nextStore = updateAuthStore((draft) => {
     const nextName = validateAccountName(name, draft.accounts);
     draft.accounts.push({
@@ -469,6 +477,7 @@ function createManagedAccount({ name, password, permissions }) {
       name: nextName,
       username: draft.username,
       password_hash: sha256(nextPassword),
+      password_bcrypt: bcryptHash,
       is_admin: false,
       permissions: normalizePermissionKeys(permissions, []),
     });
@@ -498,6 +507,9 @@ function updateManagedAccountPassword(accountId, password) {
       throw new Error("account not found");
     }
     target.password_hash = sha256(nextPassword);
+    target.password_bcrypt = passwordHasher.isBcryptEnabled()
+      ? passwordHasher.hashForStorage(nextPassword)
+      : "";
   });
   return getAuthAccountById(accountId);
 }
@@ -689,38 +701,57 @@ function createSession(account) {
 }
 
 function verifyPasswordHash(password, expectedHex) {
-  const normalizedExpected = String(expectedHex || "").toLowerCase();
-  const providedHex = sha256(String(password || "")).toLowerCase();
-  try {
-    const expected = Buffer.from(normalizedExpected, "hex");
-    const provided = Buffer.from(providedHex, "hex");
-    if (!expected.length || expected.length !== provided.length) {
-      return false;
-    }
-    return crypto.timingSafeEqual(expected, provided);
-  } catch (_err) {
-    return false;
-  }
+  // Legacy SHA256-only helper kept for any callers that still depend on it.
+  // Prefer passwordHasher.verify(password, account) for new code.
+  return passwordHasher.verify(password, { password_hash: expectedHex }).valid;
 }
 
 function findAccountByCredentials(username, password) {
   const normalizedUsername = String(username || "").trim();
   if (!normalizedUsername) {
-    return null;
+    return { account: null, needsUpgrade: false, method: null };
   }
   for (const account of getAuthStore().accounts || []) {
     if (!account || account.username !== normalizedUsername) {
       continue;
     }
-    if (verifyPasswordHash(password, account.password_hash)) {
-      return account;
+    const result = passwordHasher.verify(password, account);
+    if (result.valid) {
+      return { account, needsUpgrade: result.needsUpgrade, method: result.method };
     }
   }
-  return null;
+  return { account: null, needsUpgrade: false, method: null };
+}
+
+function upgradeAccountToBcrypt(accountId, plaintextPassword) {
+  const store = getAuthStore();
+  const next = {
+    ...store,
+    accounts: store.accounts.map((entry) => {
+      if (entry.id !== accountId) return entry;
+      return {
+        ...entry,
+        password_bcrypt: passwordHasher.hashForStorage(plaintextPassword),
+      };
+    }),
+  };
+  try {
+    persistAuthStore(next);
+    log.info({ accountId }, "password auto-upgraded to bcrypt");
+  } catch (err) {
+    log.warn(
+      { accountId, err: err && err.message },
+      `bcrypt auto-upgrade persist failed: ${err && err.message}`
+    );
+  }
 }
 
 function getMatchedAccount(username, password) {
-  return findAccountByCredentials(username, password);
+  const { account, needsUpgrade } = findAccountByCredentials(username, password);
+  if (account && needsUpgrade) {
+    upgradeAccountToBcrypt(account.id, password);
+  }
+  return account;
 }
 
 function getSessionByRequest(req) {
