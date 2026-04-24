@@ -1509,6 +1509,14 @@ app.use((req, _res, next) => {
   next();
 });
 
+// Audit every request (after session enrichment, before routes).
+const { createAuditLogger } = require("./services/auditLogger");
+const { auditRequestMiddleware } = require("./middleware/auditRequest");
+const auditLogger = createAuditLogger({
+  getPool: () => reportRepo.getPool(),
+});
+app.use(auditRequestMiddleware(auditLogger));
+
 require("./routes/auth-public").register(app, {
   express,
   getAuthStore,

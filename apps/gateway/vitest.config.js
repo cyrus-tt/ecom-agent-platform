@@ -24,6 +24,8 @@ module.exports = {
       // Disable bcrypt auto-upgrade during tests: avoids slow bcrypt.hashSync
       // on each fixture login and prevents writeJsonAtomic mutating the fixture.
       ENABLE_BCRYPT: "false",
+      // Keep audit in pino-only mode during tests (no PostgreSQL pool).
+      ENABLE_AUDIT_DB: "false",
     },
     reporters: ["verbose"],
   },
