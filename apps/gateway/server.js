@@ -1632,6 +1632,10 @@ require("./routes/spa").register(app, {
   sendReactApp,
 });
 
+require("./routes/docs").register(app, {
+  requireAdmin,
+});
+
 // ── dispatch agent (开关由 DISPATCH_AGENT_ENABLED 控制) ──
 if (dispatchModule.isEnabled()) {
   app.get(["/dispatch", "/dispatch/"], requirePermission("dispatch"), (_req, res) => {
