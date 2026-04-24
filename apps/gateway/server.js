@@ -1509,6 +1509,16 @@ app.use((req, _res, next) => {
   next();
 });
 
+// Sentry request handler must come BEFORE all other middleware/routes
+// so it can capture exceptions from anywhere downstream. No-op if
+// SENTRY_DSN is not configured.
+const sentry = require("./lib/sentryClient");
+app.use(sentry.expressRequestHandler());
+
+// Prom-client metrics middleware: records duration + status class per route.
+const { metricsMiddleware } = require("./middleware/metrics");
+app.use(metricsMiddleware());
+
 // Audit every request (after session enrichment, before routes).
 const { createAuditLogger } = require("./services/auditLogger");
 const { auditRequestMiddleware } = require("./middleware/auditRequest");
@@ -1516,6 +1526,9 @@ const auditLogger = createAuditLogger({
   getPool: () => reportRepo.getPool(),
 });
 app.use(auditRequestMiddleware(auditLogger));
+
+// Expose Prometheus scrape endpoint (admin-gated via routes/metrics.js).
+require("./routes/metrics").register(app, { requireAdmin });
 
 require("./routes/auth-public").register(app, {
   express,
@@ -1647,6 +1660,10 @@ if (dispatchModule.isEnabled()) {
   });
   dispatchModule.tryRegister(app, { requirePermission });
 }
+
+// Sentry error handler — runs before our generic handler, reports to DSN
+// if configured. No-op otherwise (errors still reach generic handler).
+app.use(sentry.expressErrorHandler());
 
 app.use((err, _req, res, _next) => {
   const message = String(err && err.message ? err.message : err);
