@@ -1585,6 +1585,7 @@ require("./routes/admin").register(app, {
   ARRIVAL_PROJECT_DIR,
   PG_PIPELINE_SCRIPT,
   PROJECT_ROOT,
+  getPool: () => reportRepo.getPool(),
 });
 
 app.use(express.static(PUBLIC_DIR, { index: false, fallthrough: true }));

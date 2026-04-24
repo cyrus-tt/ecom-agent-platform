@@ -25,6 +25,10 @@ function register(app, ctx) {
     sendReactApp(res);
   });
 
+  app.get(["/admin/usage", "/admin/usage/"], requireAdmin, (_req, res) => {
+    sendReactApp(res);
+  });
+
   app.get("/", requirePermission("portal"), (_req, res) => {
     sendReactApp(res);
   });

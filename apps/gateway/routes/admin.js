@@ -12,9 +12,11 @@
  *   /api/admin/refresh-arrival                — trigger arrival refresh job
  *   /api/admin/rebuild-weekly                 — trigger PG pipeline rebuild
  *   /api/admin/jobs/:jobId                    — managed job status
+ *   /api/admin/usage                          — aggregate from audit_log (PR9)
  */
 
 const fs = require("fs");
+const usageRepo = require("../services/usageRepo");
 
 function register(app, ctx) {
   const {
@@ -38,6 +40,8 @@ function register(app, ctx) {
     ARRIVAL_PROJECT_DIR,
     PG_PIPELINE_SCRIPT,
     PROJECT_ROOT,
+    // PR9: audit_log aggregate
+    getPool,
   } = ctx;
 
   // ── managed accounts ───────────────────────────────────────────────
@@ -225,6 +229,14 @@ function register(app, ctx) {
       return res.status(404).json({ ok: false, message: "job not found" });
     }
     return res.json({ ok: true, job });
+  });
+
+  // ── usage statistics (from audit_log) ──────────────────────────────
+  app.get("/api/admin/usage", requireAdmin, async (req, res) => {
+    const interval = String(req.query.interval || "24 hours").trim();
+    const payload = await usageRepo.getUsage(getPool, interval);
+    const statusCode = payload.ok ? 200 : 503;
+    return res.status(statusCode).json(payload);
   });
 }
 
