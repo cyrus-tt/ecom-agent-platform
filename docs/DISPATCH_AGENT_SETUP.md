@@ -1,4 +1,4 @@
-﻿> 2026-04-23 update
+> 2026-04-23 update
 >
 > Dispatch is now built in by default in ecom-agent-platform.
 > DISPATCH_AGENT_ENABLED defaults to enabled; set it to false only when you want to disable dispatch routes.

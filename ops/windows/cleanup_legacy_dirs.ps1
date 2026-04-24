@@ -1,4 +1,4 @@
-﻿param(
+param(
   [int]$MaxAttempts = 600,
   [int]$IntervalSeconds = 2
 )
