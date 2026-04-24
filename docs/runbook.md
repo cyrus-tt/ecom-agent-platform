@@ -244,6 +244,13 @@ DISPATCH_AGENT_ENABLED=false # 关调拨模块
 
 V2 计划：引入 Sentry 自托管（错误告警）+ prom-client + Grafana（业务指标）。见设计文档 §7 非目标清单讨论。
 
+### 6.1 Grafana 仪表盘（PR8 指标 → V2 一键导入）
+
+- 仪表盘 JSON：`docs/grafana/ecom-agent-platform-dashboard.json`（uid = `ecom-agent-gateway`）。
+- 导入步骤：Grafana 10+ → `Dashboards` → `New` → `Import` → 上传或粘贴 JSON → 选择 Prometheus datasource → Import。面板集覆盖 HTTP p50/p95/p99、QPS（按 status_class 堆叠）、5xx 错误率、Top 5 慢 route、event loop lag、heap、CPU、句柄数 / FD、审计写入代理指标。详见 `docs/grafana/README.md`。
+- Prometheus scrape：`/api/metrics` 被 `requireAdmin` 保护，推荐路径是等 ADR-0012（V2）metrics-auth 合并后用 `Authorization: Bearer <METRICS_TOKEN>`；在此之前只能手动 `curl -b <admin-cookie>` 验证或做 127.0.0.1 白名单测试，**严禁匿名对外开放 `/api/metrics`**。scrape 片段模板见 `docs/grafana/README.md` §2。
+- 决策记录：[ADR-0011 Grafana 仪表盘](./adr/0011-grafana-dashboard.md)、[ADR-0008 Prometheus 指标 + Sentry](./adr/0008-metrics-and-sentry.md)。
+
 ---
 
 ## 7. 关键文件索引
