@@ -79,4 +79,68 @@ describe("smoke: input validation (zod)", () => {
     const paths = res.body.issues.map((i) => i.path);
     expect(paths).toContain("start_date");
   });
+
+  // ── /api/admin/accounts POST (PR12) ────────────────────────────────
+
+  it("admin/accounts POST with missing password → 400", async () => {
+    const { cookie } = await login(agent, "smoke-admin", "smoke-pass");
+    const res = await agent
+      .post("/api/admin/accounts")
+      .set("Cookie", cookie)
+      .send({ name: "new user" });
+    expect(res.status).toBe(400);
+    const paths = res.body.issues.map((i) => i.path);
+    expect(paths).toContain("password");
+  });
+
+  it("admin/accounts POST with empty name → 400", async () => {
+    const { cookie } = await login(agent, "smoke-admin", "smoke-pass");
+    const res = await agent
+      .post("/api/admin/accounts")
+      .set("Cookie", cookie)
+      .send({ name: "", password: "pw" });
+    expect(res.status).toBe(400);
+    const paths = res.body.issues.map((i) => i.path);
+    expect(paths).toContain("name");
+  });
+
+  it("admin/accounts POST with non-admin cookie → 403 (auth before zod)", async () => {
+    const { cookie } = await login(agent, "smoke-user", "smoke-user-pass");
+    const res = await agent
+      .post("/api/admin/accounts")
+      .set("Cookie", cookie)
+      .send({});
+    expect(res.status).toBe(403);
+  });
+
+  // ── /api/admin/accounts/:id/permissions PATCH (PR12) ───────────────
+
+  it("PATCH permissions without permissions field → 400", async () => {
+    const { cookie } = await login(agent, "smoke-admin", "smoke-pass");
+    const res = await agent
+      .patch("/api/admin/accounts/acct_smoke_user/permissions")
+      .set("Cookie", cookie)
+      .send({});
+    expect(res.status).toBe(400);
+    const paths = res.body.issues.map((i) => i.path);
+    expect(paths).toContain("permissions");
+  });
+
+  it("PATCH permissions with non-array → 400", async () => {
+    const { cookie } = await login(agent, "smoke-admin", "smoke-pass");
+    const res = await agent
+      .patch("/api/admin/accounts/acct_smoke_user/permissions")
+      .set("Cookie", cookie)
+      .send({ permissions: "not-an-array" });
+    expect(res.status).toBe(400);
+  });
+
+  // ── /api/dispatch/public/confirm (PR12) ────────────────────────────
+
+  it("dispatch/public/confirm with responses as string → 400", async () => {
+    const res = await agent
+      .post("/api/dispatch/public/confirm")
+      .send({ responses: "not-an-object" });
+    expect(res.status).toBe(400);
+  });
 });

@@ -211,13 +211,16 @@ function registerRoutes(app, { requirePermission }) {
   });
 
   // ── 提交确认(token 授权) ────────────────────────
+  const { validateBody } = require("../../middleware/validateBody");
+  const { publicConfirmBodySchema } = require("../../schemas/dispatch");
   app.post("/api/dispatch/public/confirm",
     express.json({ limit: "256kb" }),
+    validateBody(publicConfirmBodySchema),
     (req, res) => {
       const token = String(req.query.token || req.body.token || "");
       const verified = taskStore.verifyConfirmToken(token);
       if (!verified) return res.status(401).json({ ok: false, message: "token_invalid_or_expired" });
-      const responses = (req.body && req.body.responses) || {};
+      const responses = req.body.responses || {};
       const result = orchestrator.submitConfirm(verified.taskId, responses);
       if (!result.ok) {
         return res.status(409).json({ ok: false, message: "task_not_waiting_for_confirm" });

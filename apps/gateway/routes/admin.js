@@ -17,6 +17,13 @@
 
 const fs = require("fs");
 const usageRepo = require("../services/usageRepo");
+const { validateBody } = require("../middleware/validateBody");
+const {
+  createAccountBodySchema,
+  updatePermissionsBodySchema,
+  updatePasswordBodySchema,
+  deepseekKeyBodySchema,
+} = require("../schemas/admin");
 
 function register(app, ctx) {
   const {
@@ -57,29 +64,36 @@ function register(app, ctx) {
     });
   });
 
-  app.post("/api/admin/accounts", requireAdmin, express.json({ limit: "256kb" }), (req, res) => {
-    try {
-      const account = createManagedAccount({
-        name: req.body?.name,
-        password: req.body?.password,
-        permissions: req.body?.permissions,
-      });
-      return res.status(201).json({
-        ok: true,
-        account: sanitizeAccountForClient(account),
-      });
-    } catch (err) {
-      return res.status(400).json({ ok: false, message: String(err?.message || err) });
+  app.post(
+    "/api/admin/accounts",
+    requireAdmin,
+    express.json({ limit: "256kb" }),
+    validateBody(createAccountBodySchema),
+    (req, res) => {
+      try {
+        const account = createManagedAccount({
+          name: req.body.name,
+          password: req.body.password,
+          permissions: req.body.permissions,
+        });
+        return res.status(201).json({
+          ok: true,
+          account: sanitizeAccountForClient(account),
+        });
+      } catch (err) {
+        return res.status(400).json({ ok: false, message: String(err?.message || err) });
+      }
     }
-  });
+  );
 
   app.patch(
     "/api/admin/accounts/:accountId/permissions",
     requireAdmin,
     express.json({ limit: "256kb" }),
+    validateBody(updatePermissionsBodySchema),
     (req, res) => {
       try {
-        const account = updateManagedAccountPermissions(req.params.accountId, req.body?.permissions);
+        const account = updateManagedAccountPermissions(req.params.accountId, req.body.permissions);
         if (!account) {
           return res.status(404).json({ ok: false, message: "account not found" });
         }
@@ -99,9 +113,10 @@ function register(app, ctx) {
     "/api/admin/accounts/:accountId/password",
     requireAdmin,
     express.json({ limit: "256kb" }),
+    validateBody(updatePasswordBodySchema),
     (req, res) => {
       try {
-        const account = updateManagedAccountPassword(req.params.accountId, req.body?.password);
+        const account = updateManagedAccountPassword(req.params.accountId, req.body.password);
         if (!account) {
           return res.status(404).json({ ok: false, message: "account not found" });
         }
@@ -126,22 +141,28 @@ function register(app, ctx) {
     });
   });
 
-  app.post("/api/settings/ai/deepseek-key", requireAdmin, express.json({ limit: "128kb" }), (req, res) => {
-    try {
-      const apiKey = String(req.body?.api_key || "").trim();
-      if (!apiKey) {
-        return res.status(400).json({ ok: false, message: "api_key is required" });
+  app.post(
+    "/api/settings/ai/deepseek-key",
+    requireAdmin,
+    express.json({ limit: "128kb" }),
+    validateBody(deepseekKeyBodySchema),
+    (req, res) => {
+      try {
+        const apiKey = req.body.api_key.trim();
+        if (!apiKey) {
+          return res.status(400).json({ ok: false, message: "api_key is required" });
+        }
+        const settings = runtimeSecrets.setDeepseekApiKey(apiKey);
+        return res.json({
+          ok: true,
+          settings,
+        });
+      } catch (err) {
+        const message = String(err && err.message ? err.message : err);
+        return res.status(500).json({ ok: false, message });
       }
-      const settings = runtimeSecrets.setDeepseekApiKey(apiKey);
-      return res.json({
-        ok: true,
-        settings,
-      });
-    } catch (err) {
-      const message = String(err && err.message ? err.message : err);
-      return res.status(500).json({ ok: false, message });
     }
-  });
+  );
 
   app.delete("/api/settings/ai/deepseek-key", requireAdmin, (_req, res) => {
     const settings = runtimeSecrets.clearDeepseekApiKey();
