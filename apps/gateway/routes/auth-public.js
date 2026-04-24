@@ -12,6 +12,9 @@
  * requests) must NOT yet have run, otherwise /login becomes unreachable.
  */
 
+const { validateBody } = require("../middleware/validateBody");
+const { loginBodySchema } = require("../schemas/auth");
+
 function register(app, ctx) {
   const {
     express,
@@ -28,24 +31,27 @@ function register(app, ctx) {
     renderLoginPage,
   } = ctx;
 
-  app.post("/api/auth/login", express.json({ limit: "256kb" }), (req, res) => {
-    const body = req.body || {};
-    const username = String(body.username || "").trim();
-    const password = String(body.password || "");
-    const nextUrl = normalizeNext(body.next);
-    const matchedAccount = getMatchedAccount(username, password);
+  app.post(
+    "/api/auth/login",
+    express.json({ limit: "256kb" }),
+    validateBody(loginBodySchema),
+    (req, res) => {
+      const { username, password, next: rawNext } = req.body;
+      const nextUrl = normalizeNext(rawNext);
+      const matchedAccount = getMatchedAccount(username, password);
 
-    if (!matchedAccount) {
-      return res.status(401).json({ ok: false, message: "账号或密码错误" });
+      if (!matchedAccount) {
+        return res.status(401).json({ ok: false, message: "账号或密码错误" });
+      }
+
+      const session = createSession(matchedAccount);
+      setSessionCookie(res, session.sid);
+      return res.json({
+        ...buildAuthMePayload(session),
+        next: resolvePostLoginRoute(matchedAccount, nextUrl),
+      });
     }
-
-    const session = createSession(matchedAccount);
-    setSessionCookie(res, session.sid);
-    return res.json({
-      ...buildAuthMePayload(session),
-      next: resolvePostLoginRoute(matchedAccount, nextUrl),
-    });
-  });
+  );
 
   app.get("/login", (req, res) => {
     if (req.authUser) {

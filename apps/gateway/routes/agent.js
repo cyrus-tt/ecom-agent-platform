@@ -11,6 +11,9 @@
  *   GET  /api/agent/reports/:id  — fetch single saved report
  */
 
+const { validateBody } = require("../middleware/validateBody");
+const { runBodySchema } = require("../schemas/agent");
+
 function register(app, ctx) {
   const {
     express,
@@ -51,15 +54,16 @@ function register(app, ctx) {
     "/api/agent/run",
     requirePermission("analysis"),
     express.json({ limit: "1mb" }),
+    validateBody(runBodySchema),
     async (req, res, next) => {
       try {
         res.setTimeout(95000);
-        const body = req.body && typeof req.body === "object" ? req.body : {};
+        const body = req.body;
         const periodType = normalizeAgentPeriodType(body.period_type);
-        const startDate = String(body.start_date || "").trim();
-        const endDate = String(body.end_date || "").trim();
-        const skillId = String(body.skill_id || agentSkills.DEFAULT_SKILL_ID).trim();
-        const promptText = String(body.prompt_text || "").trim();
+        const startDate = body.start_date || "";
+        const endDate = body.end_date || "";
+        const skillId = body.skill_id || agentSkills.DEFAULT_SKILL_ID;
+        const promptText = body.prompt_text || "";
         const promptConfig = agentSkills.resolveSkillPrompt(skillId, promptText);
 
         const metrics = await metricsService.calculateMetrics({
