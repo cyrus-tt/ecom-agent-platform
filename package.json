@@ -9,6 +9,7 @@
     "install:web": "npm --prefix apps/web install",
     "install:all": "npm run install:gateway && npm run install:web",
     "build:web": "npm --prefix apps/web run build",
+    "build:openapi": "node apps/gateway/scripts/build-openapi.js",
     "start:gateway": "npm --prefix apps/gateway run start",
     "dev:gateway": "npm --prefix apps/gateway run dev",
     "dev:web": "npm --prefix apps/web run dev",

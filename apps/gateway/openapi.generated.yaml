@@ -1,0 +1,493 @@
+# AUTO-GENERATED — do not edit by hand. Run `npm run build:openapi`.
+openapi: 3.0.3
+info:
+  title: ecom-agent-platform Gateway API (generated)
+  version: 1.0.0
+  description: >-
+    Auto-generated from zod schemas in apps/gateway/schemas/*. Run `npm run
+    build:openapi` to refresh. The hand-written openapi.yaml remains the default
+    served by /api/docs; pass ?source=generated to view this doc.
+servers:
+  - url: http://localhost:3000
+    description: Local dev / current production gateway.
+components:
+  securitySchemes:
+    sessionAuth:
+      type: apiKey
+      in: cookie
+      name: anta_sid
+  schemas:
+    LoginRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 128
+        password:
+          type: string
+          minLength: 1
+          maxLength: 256
+        next:
+          type: string
+          maxLength: 2048
+      required:
+        - username
+        - password
+    AgentRunRequest:
+      type: object
+      properties:
+        period_type:
+          type: string
+          minLength: 1
+          maxLength: 32
+        start_date:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          default: ''
+        end_date:
+          type: string
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          default: ''
+        skill_id:
+          type: string
+          maxLength: 64
+          default: ''
+        prompt_text:
+          type: string
+          maxLength: 4096
+          default: ''
+      required:
+        - period_type
+        - start_date
+        - end_date
+    CreateAccountRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+        permissions:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 32
+          maxItems: 32
+          default: []
+      required:
+        - name
+        - password
+    UpdatePermissionsRequest:
+      type: object
+      properties:
+        permissions:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 32
+          maxItems: 32
+      required:
+        - permissions
+    UpdatePasswordRequest:
+      type: object
+      properties:
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+      required:
+        - password
+    DeepseekKeyRequest:
+      type: object
+      properties:
+        api_key:
+          type: string
+          minLength: 1
+          maxLength: 256
+      required:
+        - api_key
+    DispatchPublicConfirmRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          maxLength: 128
+        responses:
+          type: object
+          additionalProperties:
+            type: string
+            maxLength: 64
+          default: {}
+    LoginResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        account_id:
+          type: string
+        username:
+          type: string
+        name:
+          type: string
+        is_admin:
+          type: boolean
+        permissions:
+          type: array
+          items:
+            type: string
+        preferred_route:
+          type: string
+        expires_at:
+          type: string
+        next:
+          type: string
+      required:
+        - ok
+    Error:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+        issues:
+          type: array
+          items:
+            type: object
+            properties:
+              path:
+                type: string
+              message:
+                type: string
+            required:
+              - path
+              - message
+      required:
+        - ok
+      description: Standard failure envelope used across the gateway.
+    Ok:
+      type: object
+      properties:
+        ok:
+          type: boolean
+      required:
+        - ok
+      description: Generic success envelope.
+  parameters: {}
+paths:
+  /api/auth/login:
+    post:
+      summary: Exchange credentials for a session cookie
+      tags:
+        - auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                password:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                next:
+                  type: string
+                  maxLength: 2048
+              required:
+                - username
+                - password
+      responses:
+        '200':
+          description: Logged in; sets session cookie.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Wrong credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/agent/run:
+    post:
+      summary: Generate an AI analysis report.
+      tags:
+        - agent
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                period_type:
+                  type: string
+                  minLength: 1
+                  maxLength: 32
+                start_date:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+                  default: ''
+                end_date:
+                  type: string
+                  pattern: ^\d{4}-\d{2}-\d{2}$
+                  default: ''
+                skill_id:
+                  type: string
+                  maxLength: 64
+                  default: ''
+                prompt_text:
+                  type: string
+                  maxLength: 4096
+                  default: ''
+              required:
+                - period_type
+                - start_date
+                - end_date
+      responses:
+        '200':
+          description: Report generated or no-data notice.
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Upstream AI service error.
+  /api/admin/accounts:
+    post:
+      summary: Create a managed (non-primary) account.
+      tags:
+        - admin
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                password:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                permissions:
+                  type: array
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+                  maxItems: 32
+                  default: []
+              required:
+                - name
+                - password
+      responses:
+        '200':
+          description: Account created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not admin.
+  /api/admin/accounts/{accountId}/permissions:
+    patch:
+      summary: Overwrite an account's non-admin permissions.
+      tags:
+        - admin
+      security:
+        - sessionAuth: []
+      parameters:
+        - schema:
+            type: string
+          required: true
+          name: accountId
+          in: path
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                permissions:
+                  type: array
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+                  maxItems: 32
+              required:
+                - permissions
+      responses:
+        '200':
+          description: Permissions updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not admin.
+  /api/admin/accounts/{accountId}/password:
+    patch:
+      summary: Admin resets another account's password.
+      tags:
+        - admin
+      security:
+        - sessionAuth: []
+      parameters:
+        - schema:
+            type: string
+          required: true
+          name: accountId
+          in: path
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+              required:
+                - password
+      responses:
+        '200':
+          description: Password updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not admin.
+  /api/settings/ai/deepseek-key:
+    post:
+      summary: Update the DeepSeek API key (admin only).
+      tags:
+        - admin
+        - ai-settings
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                api_key:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+              required:
+                - api_key
+      responses:
+        '200':
+          description: Key saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not admin.
+  /api/dispatch/public/confirm:
+    post:
+      summary: Public confirm endpoint for dispatch (token-authorized).
+      description: >-
+        Token can come via query string `?token=` or body. Body schema
+        documented here covers `responses` map.
+      tags:
+        - dispatch
+        - public
+      parameters:
+        - schema:
+            type: string
+          required: false
+          name: token
+          in: query
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                  maxLength: 128
+                responses:
+                  type: object
+                  additionalProperties:
+                    type: string
+                    maxLength: 64
+                  default: {}
+      responses:
+        '200':
+          description: Confirmation accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Bad / expired token.
