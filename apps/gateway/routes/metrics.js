@@ -12,9 +12,9 @@
  */
 
 const metrics = require("../lib/metrics");
+const { requireAdmin } = require("../middleware/requireAdmin");
 
-function register(app, ctx) {
-  const { requireAdmin } = ctx;
+function register(app) {
 
   app.get("/api/metrics", requireAdmin, async (_req, res, next) => {
     try {

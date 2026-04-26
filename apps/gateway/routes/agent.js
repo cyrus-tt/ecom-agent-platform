@@ -13,12 +13,12 @@
 
 const { validateBody } = require("../middleware/validateBody");
 const { runBodySchema } = require("../schemas/agent");
+const { requirePermission } = require("../middleware/requirePermission");
+const { requireAgentContextAccess } = require("../middleware/requireAgentContextAccess");
 
 function register(app, ctx) {
   const {
     express,
-    requirePermission,
-    requireAgentContextAccess,
     agentSkills,
     agentService,
     analysisContextProvider,

@@ -9,8 +9,10 @@
  *   - /api/channel-dashboard/* — channel/store dashboard + style drilldown
  */
 
+const { requirePermission } = require("../middleware/requirePermission");
+
 function register(app, ctx) {
-  const { requirePermission, reportRepo, parsePositiveInt } = ctx;
+  const { reportRepo, parsePositiveInt } = ctx;
 
   // ── Comprehensive dashboard ────────────────────────────────────────
 
