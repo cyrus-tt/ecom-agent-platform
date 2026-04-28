@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import http from "./api/http";
 import { useAuth } from "./auth/AuthContext";
+import ChangePasswordModal from "./components/ChangePasswordModal";
 import { ADMIN_ACCOUNTS_ROUTE, APP_MODULES, NO_ACCESS_ROUTE, getPreferredRoute, resolveSelectedMenu } from "./auth/modules";
 import AnalysisPage from "./pages/AnalysisPage";
 import ArrivalPage from "./pages/ArrivalPage";
@@ -75,6 +76,7 @@ function AppShell() {
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [aiSettings, setAiSettings] = useState(null);
   const [deepseekKey, setDeepseekKey] = useState("");
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const selected = resolveSelectedMenu(location.pathname);
 
   useEffect(() => {
@@ -179,12 +181,16 @@ function AppShell() {
                 AI 设置
               </Button>
             ) : null}
+            <Button className="app-header-change-password-btn" onClick={() => setChangePasswordOpen(true)}>
+              修改密码
+            </Button>
             <Button className="app-header-logout-btn" href="/logout">
               退出
             </Button>
           </Space>
         </div>
       </Header>
+      <ChangePasswordModal open={changePasswordOpen} onCancel={() => setChangePasswordOpen(false)} />
 
       <Content className="app-content">
         <Routes>

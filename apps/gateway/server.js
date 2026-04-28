@@ -1558,7 +1558,8 @@ app.post("/api/auth/me/password", express.json({ limit: "256kb" }), (req, res) =
     return res.status(404).json({ ok: false, message: "账号不存在" });
   }
   if (!verifyPasswordHash(oldPassword, account.password_hash)) {
-    return res.status(401).json({ ok: false, message: "旧密码不正确" });
+    // 注意：用 400 而非 401，避免前端 axios interceptor 把页面跳回登录页（401 = 未登录场景才用）
+    return res.status(400).json({ ok: false, message: "旧密码不正确" });
   }
 
   const policyResult = passwordPolicy.validate(newPassword);
