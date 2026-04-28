@@ -4,6 +4,7 @@
   const form = document.getElementById("loginForm");
   const userInput = document.getElementById("username");
   const passInput = document.getElementById("password");
+  const rememberInput = document.getElementById("remember");
   const submitBtn = document.getElementById("submitBtn");
   const errorMsg = document.getElementById("errorMsg");
 
@@ -60,6 +61,7 @@
       const payload = {
         username: userInput.value.trim(),
         password: passInput ? passInput.value : "",
+        remember: rememberInput ? !!rememberInput.checked : false,
         next,
       };
       const resp = await fetch("/api/auth/login", {
