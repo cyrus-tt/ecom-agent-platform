@@ -15,6 +15,7 @@ const analysisContextProvider = require("./services/analysisContextProvider");
 const appConfig = require("./services/appConfig");
 const runtimeSecrets = require("./services/runtimeSecrets");
 const dispatchModule = require("./services/dispatch");
+const passwordPolicy = require("./lib/passwordPolicy");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -749,15 +750,26 @@ function getSessionByRequest(req) {
   };
 }
 
-function setSessionCookie(res, sid) {
+const REMEMBER_ME_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 天
+
+function setSessionCookie(res, sid, options = {}) {
   const authStore = getAuthStore();
-  res.cookie(authStore.cookie_name, sid, {
+  const cookieOptions = {
     httpOnly: true,
     sameSite: "lax",
     secure: AUTH_COOKIE_SECURE,
     path: "/",
-    maxAge: authStore.session_ttl_seconds * 1000,
-  });
+  };
+  // remember=true → 30 天免登；remember=false → session-only（关浏览器即失效）；
+  // 未传 remember → 沿用 session_ttl_seconds（兼容旧 setSessionCookie(res, sid) 调用）
+  if (options.remember === true) {
+    cookieOptions.maxAge = REMEMBER_ME_MAX_AGE_MS;
+  } else if (options.remember === false) {
+    // 不设 maxAge / expires → 浏览器视为 session cookie，关闭即失效
+  } else {
+    cookieOptions.maxAge = authStore.session_ttl_seconds * 1000;
+  }
+  res.cookie(authStore.cookie_name, sid, cookieOptions);
 }
 
 function clearSessionCookie(res) {
@@ -1476,6 +1488,7 @@ app.post("/api/auth/login", express.json({ limit: "256kb" }), (req, res) => {
   const body = req.body || {};
   const username = String(body.username || "").trim();
   const password = String(body.password || "");
+  const remember = body.remember === true;
   const nextUrl = normalizeNext(body.next);
   const matchedAccount = getMatchedAccount(username, password);
 
@@ -1484,7 +1497,7 @@ app.post("/api/auth/login", express.json({ limit: "256kb" }), (req, res) => {
   }
 
   const session = createSession(matchedAccount);
-  setSessionCookie(res, session.sid);
+  setSessionCookie(res, session.sid, { remember });
   return res.json({
     ...buildAuthMePayload(session),
     next: resolvePostLoginRoute(matchedAccount, nextUrl),
@@ -1528,6 +1541,50 @@ app.post("/api/auth/logout", (req, res) => {
   }
   clearSessionCookie(res);
   res.json({ ok: true });
+});
+
+// 用户登录后自助修改密码：旧密 + 新密双因素，成功后强制本会话失效要求重登
+app.post("/api/auth/me/password", express.json({ limit: "256kb" }), (req, res) => {
+  if (!req.authSession) {
+    return res.status(401).json({ ok: false, message: "Unauthorized" });
+  }
+  const body = req.body || {};
+  const oldPassword = String(body.oldPassword || "");
+  const newPassword = String(body.newPassword || "");
+
+  const accountId = req.authSession.account_id;
+  const account = getAuthAccountById(accountId);
+  if (!account) {
+    return res.status(404).json({ ok: false, message: "账号不存在" });
+  }
+  if (!verifyPasswordHash(oldPassword, account.password_hash)) {
+    return res.status(401).json({ ok: false, message: "旧密码不正确" });
+  }
+
+  const policyResult = passwordPolicy.validate(newPassword);
+  if (!policyResult.ok) {
+    return res.status(422).json({
+      ok: false,
+      message: policyResult.reasons.join("；"),
+      reasons: policyResult.reasons,
+    });
+  }
+
+  try {
+    updateManagedAccountPassword(accountId, newPassword);
+  } catch (err) {
+    const message = String(err?.message || err);
+    return res.status(400).json({ ok: false, message });
+  }
+
+  // 改密成功 → 当前会话失效（清服务端 store + 清 cookie），前端跳登录页
+  const sid = parseCookies(req.headers.cookie)[getAuthStore().cookie_name];
+  if (sid) {
+    SESSION_STORE.delete(sid);
+  }
+  clearSessionCookie(res);
+
+  return res.json({ ok: true, message: "密码已更新，请重新登录" });
 });
 
 app.get("/api/auth/me", (req, res) => {
