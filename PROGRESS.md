@@ -18,7 +18,7 @@
 
 | # | 任务 | 当前状态 | 一句话 |
 |---|------|---------|--------|
-| ① | **F-LOGIN** 登录自助改密 + 记住我 30 天 | 🟡 approved（4/28）→ 待动手 | 登录页加"30 天免登录"勾选 + "忘记密码联系 Cyrus" + 登录后右上角自助改密 |
+| ① | **F-LOGIN** 登录自助改密 + 记住我 30 天 | 🔵 in-progress（4/28 Mac 端代码完成 + push origin，等 Cyrus Windows 验收） | 登录页加"30 天免登录"勾选 + "忘记密码联系 Cyrus" + 登录后右上角自助改密 |
 | ② | **F-CHANNEL-TOP20** 渠道 Top 20 板块业务逻辑调整 | ⚪ 仅口头需求 | 等 ① 完成后 brainstorm 细节 |
 | ③ | **审 + 合 PR1-12 + V2/V3** 历史 7→9 改造交付 | 🟡 待 Cyrus 审 | 见 `docs/plans/2026-04-24-pr-review-guide.md` |
 
@@ -29,6 +29,7 @@
 | **R1** | **密码哈希仍用 SHA256（未升 bcrypt）** | 公司账号被撞库 / 数据泄露 | 历史短板，作为后续 PR 单独处理；本次 F-LOGIN 不动以减小爆炸半径 | 2026-04-28 |
 | **R2** | **30 天 cookie 在共享电脑是隐患** | 用户在网吧/共享机勾"记住我" | login.html 文案显式提示"仅私人电脑勾选" | 2026-04-28 |
 | **R3** | **V2 password-policy 还没整体合入 uplift-design** | F-LOGIN 想用强密码校验 | 仅 cherry-pick `passwordPolicy.js` 单文件，不动 schemas/admin.js（避免与 v2 分支后续合并冲突） | 2026-04-28 |
+| **R4** | **主分支 `codex/mac/uplift-design` 0 个 .test.js + 无 test runner** | F-LOGIN 想写 unit/smoke 测试 | Mac 端跳过自动化测试，改由 Cyrus Windows 公司机手测兜底；PR1-12 + V2 合入后 vitest 进入主线，本风险自动消除 | 2026-04-28 |
 
 ---
 
@@ -36,7 +37,7 @@
 
 | 编号 | 任务 | Deadline | 状态 | 下一步 | Owner |
 |---|---|---|---|---|---|
-| **F-LOGIN** | 登录自助改密 + 记住我 30 天 + 忘记密码联系 Cyrus | 2026-04-30 | 🟡 approved | 开 worktree 分支 `codex/mac/feat-login-self-service-password` 动手 | Claude → Cyrus 验收 |
+| **F-LOGIN** | 登录自助改密 + 记住我 30 天 + 忘记密码联系 Cyrus | 2026-04-30 | 🔵 in-progress | Mac 端 4 commit 完成 + push origin；Cyrus 在 Windows 公司机 `git pull` + `ops/windows/start_all.ps1 -RebuildWeb` + 按 PLAN §4.7 手测 7 条 | Cyrus 验收 |
 | **F-CHANNEL-TOP20** | 渠道 Top 20 板块业务逻辑调整 | TBD | ⚪ 待 brainstorm | F-LOGIN 完成后启动 | Claude |
 | **PR-REVIEW** | Cyrus 审 + 合 PR1-12（按 base 链顺序）→ V2 三件 → V3 四件 | 自定 | 🟡 等 Cyrus 抽时间 | 看 `docs/plans/2026-04-24-pr-review-guide.md` | Cyrus |
 | **PROD-CUTOVER** | PR1-12 全合后按 runbook §4.2 切流量 | PR1-12 全合后 | ⚪ 阻塞 PR-REVIEW | — | Cyrus |

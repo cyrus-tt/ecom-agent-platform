@@ -3,7 +3,7 @@
 **PROGRESS 编号**：F-LOGIN
 **创建于**：2026-04-28
 **Deadline**：2026-04-30
-**状态**：🟡 approved（2026-04-28 Cyrus 口头 approve）
+**状态**：🔵 in-progress（2026-04-28 Mac 端 4 commit 完成 + push origin，等 Cyrus Windows 验收）
 
 ---
 
@@ -60,15 +60,18 @@ Cyrus（2026-04-28）提出：
    - 提交成功 → 提示"密码已更新，请重新登录" → 跳 `/login.html`
    - `apps/web/src/api/auth.js`（如已存在则追加 `changeOwnPassword(oldPwd, newPwd)`；不存在则新建）
 
-7. **测试**
-   - unit：`apps/gateway/tests/unit/passwordPolicy.test.js`（cherry-pick 同来源，不修改）
-   - smoke：新增 `apps/gateway/tests/smoke/auth-self-service.smoke.test.js` 至少 6 条
-     - 旧密码错 → 401
-     - 新密码弱（违反 policy）→ 422
-     - 旧密 + 新密都正确 → 200 + cookie 失效
-     - 未登录直接调 → 401
-     - login `remember=true` → 响应 cookie 含 `Max-Age=2592000`
-     - login `remember=false` → 响应 cookie 无 Max-Age（或 0 / session-only）
+7. **测试（修订 2026-04-28 · Cyrus 决策：Mac 端跳过自动化测试）**
+   - **不写 unit / smoke 自动化测试**。原因：主分支 `codex/mac/uplift-design` 0 个 `.test.js` + 无 test runner（vitest 仅在 V2 引入未合入），本 PR 不引依赖、不污染 V2 lockfile。
+   - **替代验收**：Mac 端 `npm run build` 前端编译过 + `node apps/gateway/server.js` 启动不崩 → push origin → **Cyrus 在 Windows 公司机 git pull + 启动 + 浏览器手测全部 §6 验收项**。
+   - **遗留登记**：主分支测试基础设施缺失 → PROGRESS R4（等 PR1-12 + V2 合入自然消除）
+   - **Cyrus 手测脚本**（Windows 端按顺序跑）：
+     1. 不勾"记住我" 登录 → 完成 → 关浏览器 → 重开 → 跳回登录页（session-only cookie 失效）
+     2. 勾"记住我" 登录 → 完成 → 关浏览器 → 重开 → 仍登录态（30 天 cookie）
+     3. 右上角"修改密码"：旧密错 → 提示 + 不放行
+     4. 右上角"修改密码"：新密弱（如 `1234`）→ 提示中文 reasons
+     5. 右上角"修改密码"：旧密对 + 新密合规（如 `Aaa12345`）→ 提示"请重新登录" + 跳登录页
+     6. 用旧密登录 → 失败；用新密登录 → 成功
+     7. 登录页可见"忘记密码 请在钉钉联系 Cyrus"链接
 
 8. **文档**
    - 新增 `docs/adr/0019-self-service-password-and-remember-me.md`
@@ -88,9 +91,7 @@ Cyrus（2026-04-28）提出：
   - `apps/web/src/components/ChangePasswordModal.jsx`（新）
   - `apps/web/src/api/auth.js`（追加方法 / 新建）
   - `apps/web/src/layouts/*` 或 `apps/web/src/components/UserMenu.jsx`（找到现有右上角菜单加入口）
-- **测试**：
-  - `apps/gateway/tests/unit/passwordPolicy.test.js`（新增，cherry-pick）
-  - `apps/gateway/tests/smoke/auth-self-service.smoke.test.js`（新增）
+- **测试**：本 PR 不写自动化测试（详 §4.7 修订）；Cyrus Windows 端手测 = 唯一验收路径
 - **文档**：
   - `docs/adr/0019-self-service-password-and-remember-me.md`（新）
 - **PROGRESS / Plan**：
@@ -111,14 +112,15 @@ Cyrus（2026-04-28）提出：
 - [ ] 修改密码：正常提交 → 200 + 提示"请重新登录" + 跳转登录页
 - [ ] 改密后用旧密登录失败、用新密登录成功
 
-### 工程验收
+### 工程验收（修订 2026-04-28：删除自动化测试相关项）
 
 - [ ] login.html `<input>` autocomplete 属性正确（username / current-password）
-- [ ] 新增 unit + smoke ≥ 6 条全绿
-- [ ] 已有测试 0 回归（`npm run test` 全跑全绿）
-- [ ] `npm run build`（前端）成功
-- [ ] Cyrus 在 Windows 公司机 `git pull` + `ops/windows/start_all.ps1 -RebuildWeb` + 浏览器手测全部功能验收项通过
+- [ ] Mac 端 `npm run build`（前端）成功
+- [ ] Mac 端 `node apps/gateway/server.js` 启动不报错（require / 路由注册无异常即可）
+- [ ] push origin `codex/mac/feat-login-self-service-password` 成功
+- [ ] **Cyrus 在 Windows 公司机 `git pull` + `ops/windows/start_all.ps1 -RebuildWeb` + 浏览器按 §4.7 手测脚本 7 条全部通过**
 - [ ] ADR-0019 已 commit
+- [ ] PROGRESS.md F-LOGIN 行状态切到 ✅ done + R4（测试基础设施缺失）已登记
 - [ ] PROGRESS.md F-LOGIN 行状态切到 ✅ done
 
 ## 7. 风险 / 阻塞
@@ -148,4 +150,10 @@ Cyrus（2026-04-28）提出：
 ## 执行日志（动手后追加）
 
 - 2026-04-28 — PLAN 创建，状态 ⚪ draft → 🟡 approved（Cyrus 口头确认 4 个细节均 OK）
-- _（动手时填）_ — 状态切 🔵 in-progress
+- 2026-04-28 — Cyrus 决策：Mac 端跳过自动化测试，PLAN §4.7 + §6 修订；PROGRESS R4 登记
+- 2026-04-28 — 状态切 🔵 in-progress；开 worktree `codex/mac/feat-login-self-service-password` 基于 `codex/mac/uplift-design` HEAD `5ba7815`
+- 2026-04-28 — Commit A `69aff00`：cherry-pick `passwordPolicy.js` + server.js 改 4 处（require + setSessionCookie 加 options + login 接 remember + 新 endpoint /api/auth/me/password）
+- 2026-04-28 — Commit B `4e6ed52`：login.html / login.js / login.css 加 checkbox + "忘记密码 联系 Cyrus" + autocomplete username
+- 2026-04-28 — Commit C `c8a8cca`：React ChangePasswordModal 新组件 + App.jsx Header 加按钮 + server.js 旧密错 401→400（避免 axios interceptor 误踢）
+- 2026-04-28 — 平台 esbuild 二进制（ADR-0009 workaround）build 通过：6.1mb js + 15.1kb css / 350ms
+- 2026-04-28 — Commit D（含本日志条目）：ADR-0019 + PROGRESS / PLAN 状态同步
