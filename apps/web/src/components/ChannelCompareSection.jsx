@@ -222,7 +222,7 @@ export default function ChannelCompareSection({ title, sectionKey, channels, loa
                 {showSummary ? (
                   <div className="dashboard-compare-summary">
                     <div className="dashboard-compare-summary-item">
-                      <Statistic title="GMV" value={formatSmartNumber(channel.summary?.gmv, 2)} />
+                      <Statistic title="出库金额" value={formatSmartNumber(channel.summary?.gmv, 2)} />
                     </div>
                     <div className="dashboard-compare-summary-item">
                       <Statistic title="销量" value={formatSmartNumber(channel.summary?.qty, 2)} />

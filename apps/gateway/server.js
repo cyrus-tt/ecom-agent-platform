@@ -445,6 +445,10 @@ function validateAccountPassword(password) {
   if (nextPassword.length > 128) {
     throw new Error("password is too long");
   }
+  const policyResult = passwordPolicy.validate(nextPassword);
+  if (!policyResult.ok) {
+    throw new Error(policyResult.reasons.join("；"));
+  }
   return nextPassword;
 }
 
@@ -658,11 +662,12 @@ function cleanupSessions() {
   }
 }
 
-function createSession(account) {
+function createSession(account, options = {}) {
   cleanupSessions();
   const sid = crypto.randomBytes(24).toString("hex");
   const authStore = getAuthStore();
-  const expiresAt = Date.now() + authStore.session_ttl_seconds * 1000;
+  const sessionLifetimeMs = options.remember === true ? REMEMBER_ME_MAX_AGE_MS : authStore.session_ttl_seconds * 1000;
+  const expiresAt = Date.now() + sessionLifetimeMs;
   const session = {
     sid,
     account_id: String(account?.id || ""),
@@ -1496,7 +1501,7 @@ app.post("/api/auth/login", express.json({ limit: "256kb" }), (req, res) => {
     return res.status(401).json({ ok: false, message: "账号或密码错误" });
   }
 
-  const session = createSession(matchedAccount);
+  const session = createSession(matchedAccount, { remember });
   setSessionCookie(res, session.sid, { remember });
   return res.json({
     ...buildAuthMePayload(session),

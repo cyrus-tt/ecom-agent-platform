@@ -5,6 +5,7 @@ import http from "../api/http";
 import SkuPreview from "../components/SkuPreview";
 import {
   formatInteger,
+  formatDecimal,
   formatPercent,
   formatPercentInteger,
   formatTextOrDash,
@@ -194,6 +195,7 @@ export default function ChannelDashboardPage() {
       setDraftChannels(payloadSelectedChannels);
       setPanels(Array.isArray(payload.channels) ? payload.channels : []);
       setStyleDrilldowns({});
+      styleDrilldownsRef.current = {};
       setExpandedRowKeysByTable({});
       styleDrilldownRequestRef.current = new Map();
     } catch (err) {
@@ -229,6 +231,118 @@ export default function ChannelDashboardPage() {
     syncingScrollRef.current = false;
   };
 
+  const getPeriodRangeParams = (periodKey) => {
+    const range = periodKey === "comparison" ? appliedComparisonRange : appliedRange;
+    const dateFrom = range?.[0]?.format?.("YYYY-MM-DD") || "";
+    const dateTo = range?.[1]?.format?.("YYYY-MM-DD") || dateFrom;
+    return { dateFrom, dateTo };
+  };
+
+  const ensureStyleDrilldown = async (channelCode, periodKey, row) => {
+    const safeChannelCode = String(channelCode || "").trim();
+    const safePeriodKey = String(periodKey || "").trim();
+    const safeStyle = String(row?.style || "").trim();
+    const { dateFrom, dateTo } = getPeriodRangeParams(safePeriodKey);
+    if (!safeChannelCode || !safePeriodKey || !safeStyle || !dateFrom || !dateTo) {
+      return;
+    }
+
+    const cacheKey = buildStyleDrilldownCacheKey(safeChannelCode, safePeriodKey, safeStyle);
+    const existing = styleDrilldownsRef.current[cacheKey];
+    if (existing?.loaded || existing?.loading || styleDrilldownRequestRef.current.has(cacheKey)) {
+      return;
+    }
+
+    const requestToken = {};
+    styleDrilldownRequestRef.current.set(cacheKey, requestToken);
+    setStyleDrilldowns((prev) => ({
+      ...prev,
+      [cacheKey]: {
+        loading: true,
+        loaded: false,
+        error: "",
+        meta: null,
+        style_summary: buildStyleSummaryFallback(row),
+        items: [],
+      },
+    }));
+
+    try {
+      const resp = await http.get("/api/channel-dashboard/drilldown", {
+        params: {
+          date_from: dateFrom,
+          date_to: dateTo,
+          channel: safeChannelCode,
+          style: safeStyle,
+          _t: Date.now(),
+        },
+      });
+      if (styleDrilldownRequestRef.current.get(cacheKey) !== requestToken) {
+        return;
+      }
+      const payload = resp.data || {};
+      setStyleDrilldowns((prev) => ({
+        ...prev,
+        [cacheKey]: {
+          loading: false,
+          loaded: true,
+          error: "",
+          meta: payload.meta || null,
+          style_summary: payload.style_summary || buildStyleSummaryFallback(row),
+          items: Array.isArray(payload.items) ? payload.items : [],
+        },
+      }));
+    } catch (err) {
+      if (styleDrilldownRequestRef.current.get(cacheKey) !== requestToken) {
+        return;
+      }
+      setStyleDrilldowns((prev) => ({
+        ...prev,
+        [cacheKey]: {
+          ...(prev[cacheKey] || {}),
+          loading: false,
+          loaded: false,
+          error: err?.response?.data?.message || err.message || "读取货号明细失败",
+          style_summary: prev[cacheKey]?.style_summary || buildStyleSummaryFallback(row),
+          items: [],
+        },
+      }));
+      message.error(err?.response?.data?.message || err.message || "读取货号明细失败");
+    } finally {
+      if (styleDrilldownRequestRef.current.get(cacheKey) === requestToken) {
+        styleDrilldownRequestRef.current.delete(cacheKey);
+      }
+    }
+  };
+
+  const toggleStyleDrilldown = (channelCode, periodKey, row) => {
+    const safeChannelCode = String(channelCode || "").trim();
+    const safePeriodKey = String(periodKey || "").trim();
+    const safeStyle = String(row?.style || "").trim();
+    if (!safeChannelCode || !safePeriodKey || !safeStyle) {
+      return;
+    }
+
+    const tableKey = buildStyleDrilldownTableKey(safeChannelCode, safePeriodKey);
+    const rowKey = buildChannelPanelRowKey(safeChannelCode, safePeriodKey, row);
+    const currentKeys = Array.isArray(expandedRowKeysByTable[tableKey]) ? expandedRowKeysByTable[tableKey] : [];
+    const isExpanded = currentKeys.includes(rowKey);
+    setExpandedRowKeysByTable((prev) => {
+      const prevKeys = Array.isArray(prev[tableKey]) ? prev[tableKey] : [];
+      const nextKeys = prevKeys.includes(rowKey)
+        ? prevKeys.filter((key) => key !== rowKey)
+        : [...prevKeys, rowKey];
+      return {
+        ...prev,
+        [tableKey]: nextKeys,
+      };
+    });
+
+    if (!isExpanded) {
+      void ensureStyleDrilldown(safeChannelCode, safePeriodKey, row);
+    }
+  };
+
   const disabledDate = (value) => {
     if (!value || !salesDates.length) {
       return false;
@@ -256,65 +370,70 @@ export default function ChannelDashboardPage() {
   const draftComparisonRangeText = toOptionalRangeText(draftComparisonRange);
   const appliedChannelText = selectedChannels.length
     ? selectedChannels.map((code) => channelLabelMap.get(code) || code).join(" / ")
-    : "默认渠道";
+    : "未选择渠道";
 
-  const columns = useMemo(
+  const skuDetailColumns = useMemo(
     () => [
       {
-        title: "排名",
-        dataIndex: "rank",
-        key: "rank",
-        width: 48,
-        align: TABLE_NUMBER_ALIGN,
+        title: "货号",
+        dataIndex: "sku",
+        key: "sku",
+        width: 128,
+        render: (value) => <SkuPreview sku={value} text={formatTextOrDash(value)} placement="top" />,
       },
       {
-        title: "款号",
-        dataIndex: "style",
-        key: "style",
-        width: 132,
-        align: TABLE_NUMBER_ALIGN,
-        className: "channel-style-cell",
-        render: (value) => formatTextOrDash(value),
-      },
-      {
-        title: "中类",
-        dataIndex: "category",
-        key: "category",
-        width: 72,
-        align: TABLE_NUMBER_ALIGN,
+        title: "品名",
+        dataIndex: "product_name",
+        key: "product_name",
+        width: 168,
         ellipsis: true,
         render: (value) => formatTextOrDash(value),
       },
       {
-        title: "故事包",
-        dataIndex: "story_pack",
-        key: "story_pack",
-        width: 76,
+        title: "吊牌价",
+        dataIndex: "tag_price",
+        key: "tag_price",
+        width: 70,
         align: TABLE_NUMBER_ALIGN,
-        ellipsis: true,
-        render: (value) => formatTextOrDash(value),
+        render: (value) => formatDecimal(value, 0),
       },
       {
-        title: "GMV(万)",
+        title: "出库金额(万)",
         dataIndex: "gmv",
         key: "gmv",
-        width: 84,
+        width: 86,
         align: TABLE_NUMBER_ALIGN,
         render: (value) => formatWan(value),
+      },
+      {
+        title: "出库金额占比",
+        dataIndex: "gmv_share_pct",
+        key: "gmv_share_pct",
+        width: 76,
+        align: TABLE_NUMBER_ALIGN,
+        render: (value) => formatPercent(value, 1),
       },
       {
         title: "销量",
         dataIndex: "qty",
         key: "qty",
-        width: 62,
+        width: 64,
         align: TABLE_NUMBER_ALIGN,
         render: (value) => formatInteger(value),
+      },
+      {
+        title: "销量占比",
+        dataIndex: "qty_share_pct",
+        key: "qty_share_pct",
+        width: 76,
+        align: TABLE_NUMBER_ALIGN,
+        render: (value) => formatPercent(value, 1),
       },
       {
         title: "库存",
         dataIndex: "inventory_qty",
         key: "inventory_qty",
-        width: 66,
+        width: 64,
         align: TABLE_NUMBER_ALIGN,
         render: (value) => formatInteger(value),
       },
@@ -322,29 +441,185 @@ export default function ChannelDashboardPage() {
         title: "折扣率",
         dataIndex: "discount_rate",
         key: "discount_rate",
-        width: 64,
+        width: 66,
         align: TABLE_NUMBER_ALIGN,
         render: (value) => formatPercentInteger(value),
       },
       {
-        title: "周转月",
-        dataIndex: "turnover_month",
-        key: "turnover_month",
-        width: 68,
+        title: "售罄率",
+        dataIndex: "sell_through",
+        key: "sell_through",
+        width: 66,
         align: TABLE_NUMBER_ALIGN,
-        render: (value) => formatInteger(value),
-      },
-      {
-        title: "主销 SKU",
-        dataIndex: "top_sku",
-        key: "top_sku",
-        width: 92,
-        align: TABLE_NUMBER_ALIGN,
-        render: (_, row) => <SkuPreview sku={row.top_sku} text={formatTextOrDash(row.top_sku)} placement="top" />,
+        render: (value) => formatPercentInteger(value),
       },
     ],
     []
   );
+
+  const renderStyleAction = (value, row, channelCode, periodKey) => {
+    const style = String(value || "").trim();
+    if (!style) {
+      return formatTextOrDash(value);
+    }
+    const tableKey = buildStyleDrilldownTableKey(channelCode, periodKey);
+    const rowKey = buildChannelPanelRowKey(channelCode, periodKey, row);
+    const isExpanded = (expandedRowKeysByTable[tableKey] || []).includes(rowKey);
+    const cacheKey = buildStyleDrilldownCacheKey(channelCode, periodKey, style);
+    const drilldown = styleDrilldowns[cacheKey];
+
+    return (
+      <Button
+        type="link"
+        size="small"
+        className="channel-style-link"
+        loading={Boolean(drilldown?.loading)}
+        onClick={(event) => {
+          event.stopPropagation();
+          toggleStyleDrilldown(channelCode, periodKey, row);
+        }}
+      >
+        <span className="channel-style-value">{formatTextOrDash(style)}</span>
+        <Text type="secondary" className="channel-style-expand-hint">
+          {isExpanded ? "收起" : "展开"}
+        </Text>
+      </Button>
+    );
+  };
+
+  const buildColumns = (channelCode, periodKey) => [
+    {
+      title: "排名",
+      dataIndex: "rank",
+      key: "rank",
+      width: 48,
+      align: TABLE_NUMBER_ALIGN,
+    },
+    {
+      title: "款号",
+      dataIndex: "style",
+      key: "style",
+      width: 132,
+      align: TABLE_NUMBER_ALIGN,
+      className: "channel-style-cell",
+      render: (value, row) => renderStyleAction(value, row, channelCode, periodKey),
+    },
+    {
+      title: "中类",
+      dataIndex: "category",
+      key: "category",
+      width: 72,
+      align: TABLE_NUMBER_ALIGN,
+      ellipsis: true,
+      render: (value) => formatTextOrDash(value),
+    },
+    {
+      title: "故事包",
+      dataIndex: "story_pack",
+      key: "story_pack",
+      width: 76,
+      align: TABLE_NUMBER_ALIGN,
+      ellipsis: true,
+      render: (value) => formatTextOrDash(value),
+    },
+    {
+      title: "出库金额(万)",
+      dataIndex: "gmv",
+      key: "gmv",
+      width: 84,
+      align: TABLE_NUMBER_ALIGN,
+      render: (value) => formatWan(value),
+    },
+    {
+      title: "销量",
+      dataIndex: "qty",
+      key: "qty",
+      width: 62,
+      align: TABLE_NUMBER_ALIGN,
+      render: (value) => formatInteger(value),
+    },
+    {
+      title: "库存",
+      dataIndex: "inventory_qty",
+      key: "inventory_qty",
+      width: 66,
+      align: TABLE_NUMBER_ALIGN,
+      render: (value) => formatInteger(value),
+    },
+    {
+      title: "折扣率",
+      dataIndex: "discount_rate",
+      key: "discount_rate",
+      width: 64,
+      align: TABLE_NUMBER_ALIGN,
+      render: (value) => formatPercentInteger(value),
+    },
+    {
+      title: "周转月",
+      dataIndex: "turnover_month",
+      key: "turnover_month",
+      width: 68,
+      align: TABLE_NUMBER_ALIGN,
+      render: (value) => formatInteger(value),
+    },
+    {
+      title: "主销 SKU",
+      dataIndex: "top_sku",
+      key: "top_sku",
+      width: 92,
+      align: TABLE_NUMBER_ALIGN,
+      render: (_, row) => <SkuPreview sku={row.top_sku} text={formatTextOrDash(row.top_sku)} placement="top" />,
+    },
+  ];
+
+  const renderStyleExpandedRow = (channelCode, periodKey, row) => {
+    const style = String(row?.style || "").trim();
+    const cacheKey = buildStyleDrilldownCacheKey(channelCode, periodKey, style);
+    const drilldown = styleDrilldowns[cacheKey] || {};
+    const summary = drilldown.style_summary || buildStyleSummaryFallback(row);
+
+    return (
+      <div className="channel-style-drilldown">
+        <Space wrap size={6} className="channel-style-drilldown-summary">
+          <Tag color="blue">款号：{formatTextOrDash(summary.style || row?.style)}</Tag>
+          <Tag color="cyan">中类：{formatTextOrDash(summary.category || row?.category)}</Tag>
+          <Tag color="geekblue">货号数：{summary.sku_count === null ? "-" : formatInteger(summary.sku_count)}</Tag>
+          <Tag color="purple">出库金额(万)：{formatWan(summary.gmv)}</Tag>
+          <Tag color="magenta">销量：{formatInteger(summary.qty)}</Tag>
+          <Tag color="orange">库存：{formatInteger(summary.inventory_qty)}</Tag>
+          <Tag color="gold">主销货号：{formatTextOrDash(summary.top_sku || row?.top_sku)}</Tag>
+          <Tag color="lime">主销出库金额占比：{formatPercent(summary.top_sku_gmv_share, 1)}</Tag>
+        </Space>
+        {drilldown.error ? (
+          <Text type="danger" className="channel-style-drilldown-error">
+            {drilldown.error}
+          </Text>
+        ) : null}
+        <Table
+          rowKey={(item) => `${item.style || style}-${item.sku || ""}`}
+          className="app-compact-table channel-style-drilldown-table"
+          columns={skuDetailColumns}
+          dataSource={Array.isArray(drilldown.items) ? drilldown.items : []}
+          loading={Boolean(drilldown.loading)}
+          pagination={false}
+          size="small"
+          tableLayout="fixed"
+          scroll={{ x: 864 }}
+          locale={{ emptyText: <Empty description="该款暂无货号明细" /> }}
+        />
+      </div>
+    );
+  };
+
+  const buildExpandableConfig = (channelCode, periodKey) => {
+    const tableKey = buildStyleDrilldownTableKey(channelCode, periodKey);
+    return {
+      expandedRowKeys: expandedRowKeysByTable[tableKey] || [],
+      expandedRowRender: (row) => renderStyleExpandedRow(channelCode, periodKey, row),
+      rowExpandable: (row) => Boolean(String(row?.style || "").trim()),
+      showExpandColumn: false,
+    };
+  };
 
   return (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
@@ -432,14 +707,15 @@ export default function ChannelDashboardPage() {
                 label: "当前 Top20",
                 children: (
                   <Table
-                    rowKey={(row) => `${panel.code}-current-${row.rank}-${row.style}`}
+                    rowKey={(row) => buildChannelPanelRowKey(panel.code, "current", row)}
                     className="app-compact-table channel-panel-table"
-                    columns={columns}
+                    columns={buildColumns(panel.code, "current")}
                     dataSource={Array.isArray(panel.items) ? panel.items : []}
+                    expandable={buildExpandableConfig(panel.code, "current")}
                     pagination={false}
                     size="small"
                     tableLayout="fixed"
-                    scroll={{ x: 720 }}
+                    scroll={{ x: 740 }}
                     locale={{ emptyText: <Empty description="当前区间暂无该渠道 Top20 数据" /> }}
                   />
                 ),
@@ -452,14 +728,15 @@ export default function ChannelDashboardPage() {
                 label: "同期 Top20",
                 children: (
                   <Table
-                    rowKey={(row) => `${panel.code}-comparison-${row.rank}-${row.style}`}
+                    rowKey={(row) => buildChannelPanelRowKey(panel.code, "comparison", row)}
                     className="app-compact-table channel-panel-table"
-                    columns={columns}
+                    columns={buildColumns(panel.code, "comparison")}
                     dataSource={Array.isArray(panel.comparison_items) ? panel.comparison_items : []}
+                    expandable={buildExpandableConfig(panel.code, "comparison")}
                     pagination={false}
                     size="small"
                     tableLayout="fixed"
-                    scroll={{ x: 720 }}
+                    scroll={{ x: 740 }}
                     locale={{ emptyText: <Empty description="同期区间暂无该渠道 Top20 数据" /> }}
                   />
                 ),
@@ -479,7 +756,7 @@ export default function ChannelDashboardPage() {
               >
                 <div className="channel-panel-summary">
                   <div className="channel-panel-summary-item">
-                    <Statistic title="当前 GMV(万)" value={formatWan(panel.summary?.gmv || 0)} />
+                    <Statistic title="当前 出库金额(万)" value={formatWan(panel.summary?.gmv || 0)} />
                   </div>
                   <div className="channel-panel-summary-item">
                     <Statistic title="当前销量" value={formatInteger(panel.summary?.qty || 0)} />
@@ -495,7 +772,7 @@ export default function ChannelDashboardPage() {
                 {hasComparison ? (
                   <Space wrap size={8} className="channel-panel-compare-strip">
                     <Tag color="geekblue">同期区间：{appliedComparisonRangeText}</Tag>
-                    {renderComparisonTag("GMV同比", panel.summary?.gmv, panel.comparison_summary?.gmv)}
+                    {renderComparisonTag("出库金额同比", panel.summary?.gmv, panel.comparison_summary?.gmv)}
                     {renderComparisonTag("销量同比", panel.summary?.qty, panel.comparison_summary?.qty)}
                     {renderComparisonTag("Top20占比同比", panel.summary?.top20_gmv_share, panel.comparison_summary?.top20_gmv_share)}
                     {renderComparisonTag("折扣同比", panel.summary?.anchor_discount_rate, panel.comparison_summary?.anchor_discount_rate)}

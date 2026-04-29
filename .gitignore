@@ -3,8 +3,15 @@ dist/
 build/
 runtime/pids/
 runtime/*.log
+runtime/logs/
+runtime/login*.json
+runtime/smoke-last.json
+runtime/tmp-*
 data/dispatch/
 .env
 .env.local
+apps/gateway/config/auth.local.backup-*.json
+tools/node-v*-win-x64/
+tools/node-v*-win-x64.zip
 .DS_Store
 Thumbs.db

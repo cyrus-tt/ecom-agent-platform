@@ -176,10 +176,49 @@ export default function DailyReportPage() {
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [loading, setLoading] = useState(false);
   const loadRequestRef = useRef(0);
+  const tableShellRef = useRef(null);
+  const [isGroupHeaderCollapsed, setIsGroupHeaderCollapsed] = useState(false);
 
   useEffect(() => {
     void initPage();
   }, []);
+
+  useEffect(() => {
+    const shell = tableShellRef.current;
+    if (!shell) {
+      return undefined;
+    }
+
+    let frameId = 0;
+    let body = shell.querySelector(".ant-table-body");
+
+    const syncScrolled = () => {
+      frameId = 0;
+      setIsGroupHeaderCollapsed(Boolean(body && body.scrollTop > 0));
+    };
+
+    const handleScroll = () => {
+      if (frameId) {
+        return;
+      }
+      frameId = window.requestAnimationFrame(syncScrolled);
+    };
+
+    if (!body) {
+      setIsGroupHeaderCollapsed(false);
+      return undefined;
+    }
+
+    syncScrolled();
+    body.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+      body.removeEventListener("scroll", handleScroll);
+    };
+  }, [columns.length, rows.length, page, pageSize]);
 
   const columns = useMemo(() => buildDailyColumns(meta), [meta]);
   const dataSource = useMemo(
@@ -395,20 +434,27 @@ export default function DailyReportPage() {
       </Card>
 
       <Card bordered={false} size="small" bodyStyle={{ padding: 0 }}>
-        <Table
-          rowKey="key"
-          className="app-compact-table daily-report-table"
-          columns={columns}
-          dataSource={dataSource}
-          loading={loading}
-          pagination={pagination}
-          size="small"
-          tableLayout="fixed"
-          scroll={{ x: "max-content", y: 620 }}
-          locale={{
-            emptyText: loading ? "正在加载..." : "暂无数据",
-          }}
-        />
+        <div
+          ref={tableShellRef}
+          className={["daily-report-table-shell", isGroupHeaderCollapsed ? "is-group-header-collapsed" : ""]
+            .filter(Boolean)
+            .join(" ")}
+        >
+          <Table
+            rowKey="key"
+            className="app-compact-table daily-report-table"
+            columns={columns}
+            dataSource={dataSource}
+            loading={loading}
+            pagination={pagination}
+            size="small"
+            tableLayout="fixed"
+            scroll={{ x: "max-content", y: 620 }}
+            locale={{
+              emptyText: loading ? "正在加载..." : "暂无数据",
+            }}
+          />
+        </div>
       </Card>
     </Space>
   );

@@ -71,7 +71,7 @@ export default function ChangePasswordModal({ open, onCancel }) {
           name="newPassword"
           label="新密码"
           rules={[{ required: true, message: "请输入新密码" }]}
-          extra="至少 8 位，需含大小写字母 + 数字，不能是常见弱口令"
+          extra="至少 8 位，需含小写字母，不能是常见弱口令"
         >
           <Input.Password autoComplete="new-password" />
         </Form.Item>

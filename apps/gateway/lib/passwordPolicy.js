@@ -106,14 +106,6 @@ function validate(password) {
     reasons.push("需要包含小写字母");
   }
 
-  if (!/[A-Z]/.test(password)) {
-    reasons.push("需要包含大写字母");
-  }
-
-  if (!/\d/.test(password)) {
-    reasons.push("需要包含数字");
-  }
-
   // 特殊字符默认不强制，保留开关常量以便后续一键打开
   // eslint-disable-next-line no-constant-condition
   if (false) {
@@ -136,9 +128,9 @@ module.exports = {
   _constants: {
     MIN_LENGTH: DEFAULT_MIN_LENGTH,
     MAX_LENGTH: DEFAULT_MAX_LENGTH,
-    REQUIRE_UPPER: true,
+    REQUIRE_UPPER: false,
     REQUIRE_LOWER: true,
-    REQUIRE_DIGIT: true,
+    REQUIRE_DIGIT: false,
     REQUIRE_SPECIAL: false,
     WEAK_PASSWORDS_COUNT: WEAK_PASSWORDS.size,
   },
