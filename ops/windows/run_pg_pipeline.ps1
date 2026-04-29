@@ -359,6 +359,15 @@ try {
   }
   Invoke-CheckedCommand -Label "05_postgres_split_daily_wide.sql" -FilePath $psqlPath -Arguments ($pgArgs + @("-f", ".\sql\05_postgres_split_daily_wide.sql"))
 
+  # F-PERF-40C: post-ETL ANALYZE (PLAN 2026-04-29-perf-40-concurrent-readiness.md §S5)
+  # 故意 fail-tolerant：ANALYZE 失败只意味着统计信息没刷新，查询会继续可用，不应阻断 pipeline。
+  try {
+    Invoke-CheckedCommand -Label "06_postgres_post_etl_analyze.sql" -FilePath $psqlPath -Arguments ($pgArgs + @("-f", ".\sql\06_postgres_post_etl_analyze.sql"))
+  }
+  catch {
+    Write-Warning "[PG] 06_postgres_post_etl_analyze.sql failed (continuing): $($_.Exception.Message)"
+  }
+
   $afterVisibleSkuCount = Get-VisibleSkuCount
   $afterVisibleSkus = @(Get-VisibleSkuList)
   $newVisibleSkus = @()
