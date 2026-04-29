@@ -1254,7 +1254,7 @@ function startManagedJob(spec) {
     // F-PERF-40C §S3: rebuild-weekly 成功完成后自动清缓存，避免用户看到旧数据
     if (type === "rebuild-weekly" && job.status === "succeeded") {
       try {
-        const result = reportRepo.clearAllCaches();
+        const result = reportRepo.clearAllCaches("rebuild-weekly");
         appendJobLog(job, "system", `[cache] cleared after rebuild: ${JSON.stringify(result.before)}`);
       } catch (err) {
         appendJobLog(job, "warn", `[cache] clear failed: ${String(err && err.message ? err.message : err)}`);
@@ -1904,7 +1904,7 @@ app.post("/api/admin/refresh-arrival", requireAdmin, async (req, res) => {
 // F-PERF-40C §S3: admin 手动清缓存入口（运维 / 调试用；rebuild-weekly 完成会自动清，无需手动）
 app.post("/api/admin/cache/clear", requireAdmin, (req, res) => {
   try {
-    const result = reportRepo.clearAllCaches();
+    const result = reportRepo.clearAllCaches("admin-manual");
     res.json({ ok: true, ...result });
   } catch (err) {
     const message = String(err && err.message ? err.message : err);

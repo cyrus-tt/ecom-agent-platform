@@ -686,6 +686,7 @@ function toBool(value, fallback) {
 function buildPgConfig(pgConfig) {
   const statementTimeout = Number(pgConfig?.statement_timeout_ms || 120000);
   const connectionTimeout = Number(pgConfig?.connection_timeout_ms || 10000);
+  const idleTimeout = Number(pgConfig?.idle_timeout_ms || 30000);
   return {
     host: String(pgConfig?.host || "127.0.0.1"),
     port: Number(pgConfig?.port || 5432),
@@ -695,6 +696,7 @@ function buildPgConfig(pgConfig) {
     max: Number(pgConfig?.max_pool_size || 10),
     statement_timeout: Number.isFinite(statementTimeout) && statementTimeout > 0 ? statementTimeout : 120000,
     connectionTimeoutMillis: Number.isFinite(connectionTimeout) && connectionTimeout > 0 ? connectionTimeout : 10000,
+    idleTimeoutMillis: Number.isFinite(idleTimeout) && idleTimeout > 0 ? idleTimeout : 30000,
     ssl: toBool(pgConfig?.ssl, false) ? { rejectUnauthorized: false } : false,
   };
 }
@@ -3372,26 +3374,8 @@ async function getAnalysisReportById(id) {
  *   - 让飞行中的请求自然完成（用旧数据返回一次），新请求自然命中清空后的缓存走重查
  *   - 这是"温和"的清缓存语义，与 rebuild-weekly 业务对齐
  */
-function clearAllCaches() {
-  const before = {
-    DAILY_UNION_CACHE: DAILY_UNION_CACHE.size,
-    DASHBOARD_OVERVIEW_CACHE: DASHBOARD_OVERVIEW_CACHE.size,
-    DASHBOARD_COMPARE_CACHE: DASHBOARD_COMPARE_CACHE.size,
-    DASHBOARD_DRILLDOWN_CACHE: DASHBOARD_DRILLDOWN_CACHE.size,
-    CHANNEL_DASHBOARD_CACHE: CHANNEL_DASHBOARD_CACHE.size,
-    CHANNEL_DRILLDOWN_CACHE: CHANNEL_DRILLDOWN_CACHE.size,
-    dateChoicesCache: dateChoicesCache && dateChoicesCache.payload ? 1 : 0,
-    dashboardDatesCache: dashboardDatesCache && dashboardDatesCache.payload ? 1 : 0,
-  };
-  DAILY_UNION_CACHE.clear();
-  DASHBOARD_OVERVIEW_CACHE.clear();
-  DASHBOARD_COMPARE_CACHE.clear();
-  DASHBOARD_DRILLDOWN_CACHE.clear();
-  CHANNEL_DASHBOARD_CACHE.clear();
-  CHANNEL_DRILLDOWN_CACHE.clear();
-  dateChoicesCache = { savedAt: 0, payload: null };
-  dashboardDatesCache = { savedAt: 0, payload: null };
-  return { before, cleared_at: new Date().toISOString() };
+function clearAllCaches(reason = "manual") {
+  return clearReportCaches(reason);
 }
 
 module.exports = {
@@ -3421,5 +3405,7 @@ module.exports = {
   getDailyRowsRange,
   getDailyExportRows,
   getDailyExportRowsRange,
+  getCacheStats,
+  clearReportCaches,
   clearAllCaches,
 };
