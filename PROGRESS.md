@@ -18,9 +18,11 @@
 
 | # | 任务 | 当前状态 | 一句话 |
 |---|------|---------|--------|
-| ① | **F-LOGIN** 登录自助改密 + 记住我 30 天 | 🔵 in-progress（4/28 Mac 端代码完成 + push origin，等 Cyrus Windows 验收） | 登录页加"30 天免登录"勾选 + "忘记密码联系 Cyrus" + 登录后右上角自助改密 |
-| ② | **F-CHANNEL-TOP20** 渠道 Top 20 板块业务逻辑调整 | ⚪ 仅口头需求 | 等 ① 完成后 brainstorm 细节 |
-| ③ | **审 + 合 PR1-12 + V2/V3** 历史 7→9 改造交付 | 🟡 待 Cyrus 审 | 见 `docs/plans/2026-04-24-pr-review-guide.md` |
+| ① | **F-PERF-40C** 40 并发性能加固（缓存 + 池 + 重任务隔离 + 压测）| 🟡 approved（4/29）→ 待动手 | 8 大 step：single-flight / TTL 缓存 / admin clear / PG 池 25 / ETL ANALYZE / 重操作并发 / 预热扩充 / repo 清理 + 压测 |
+| ② | **F-LOGIN** 登录自助改密 + 记住我 30 天 | 🔵 in-progress（4/28 Mac 端代码完成 + push origin，等 Cyrus Windows 验收） | 登录页加"30 天免登录"勾选 + "忘记密码联系 Cyrus" + 登录后右上角自助改密 |
+| ③ | **F-CHANNEL-TOP20** 渠道 Top 20 板块业务逻辑调整 | ⚪ 暂搁置（4/29 Cyrus 改主线到 F-PERF-40C） | F-PERF-40C 完成后再启动 brainstorm |
+| ~~④~~ | ~~**F-OUTBOUND-RENAME** GMV → 出库金额~~ | ⚪ **取消**（4/29 Cyrus 改主线） | 不做 |
+| ⑤ | **审 + 合 PR1-12 + V2/V3** 历史 7→9 改造交付 | 🟡 待 Cyrus 审 | 见 `docs/plans/2026-04-24-pr-review-guide.md` |
 
 ### 🚨 进行中风险登记（每次开工必看）
 
@@ -30,6 +32,10 @@
 | **R2** | **30 天 cookie 在共享电脑是隐患** | 用户在网吧/共享机勾"记住我" | login.html 文案显式提示"仅私人电脑勾选" | 2026-04-28 |
 | **R3** | **V2 password-policy 还没整体合入 uplift-design** | F-LOGIN 想用强密码校验 | 仅 cherry-pick `passwordPolicy.js` 单文件，不动 schemas/admin.js（避免与 v2 分支后续合并冲突） | 2026-04-28 |
 | **R4** | **主分支 `codex/mac/uplift-design` 0 个 .test.js + 无 test runner** | F-LOGIN 想写 unit/smoke 测试 | Mac 端跳过自动化测试，改由 Cyrus Windows 公司机手测兜底；PR1-12 + V2 合入后 vitest 进入主线，本风险自动消除 | 2026-04-28 |
+| **R5** | **缓存击穿**：TTL 过期或启动后首次冷查询 | F-PERF-40C 上线后早高峰 / TTL 过期窗口 | single-flight 兜底（同 key 并发只 1 个 SQL）+ 启动预热扩到 5 个核心查询 | 2026-04-29 |
+| **R6** | **PG `max_connections` 可能不够** | 池 max 25 但 PG `max_connections < 50` | Cyrus 在 Windows 端 `SHOW max_connections;` 验证；不够则手动调 `postgresql.conf` | 2026-04-29 |
+| **R7** | **PowerShell 40 并发压测精度有限** | F-PERF-40C 验收对比 P95 数字 | PS `Start-ThreadJob` 比 k6 误差 ±10%，但 40 并发量级足够；不引新依赖 | 2026-04-29 |
+| **R8** | **重操作排队语义用户困惑** | 用户连点 Excel 导出 5 次 | 429 + 中文友好 message；前端 disabled 防连点是后续 PR | 2026-04-29 |
 
 ---
 
@@ -37,8 +43,10 @@
 
 | 编号 | 任务 | Deadline | 状态 | 下一步 | Owner |
 |---|---|---|---|---|---|
-| **F-LOGIN** | 登录自助改密 + 记住我 30 天 + 忘记密码联系 Cyrus | 2026-04-30 | 🔵 in-progress | Mac 端 4 commit 完成 + push origin；Cyrus 在 Windows 公司机 `git pull` + `ops/windows/start_all.ps1 -RebuildWeb` + 按 PLAN §4.7 手测 7 条 | Cyrus 验收 |
-| **F-CHANNEL-TOP20** | 渠道 Top 20 板块业务逻辑调整 | TBD | ⚪ 待 brainstorm | F-LOGIN 完成后启动 | Claude |
+| **F-PERF-40C** | 40 并发性能加固 · 8 大 step | 2026-05-03 | 🟡 approved | Phase 0 PLAN 落地 → Phase 1 并行 (subagent S5/S8) + 主线 (S2) → Phase 2 主线 sequential (S1/S3/S6/S7) → Phase 3 (S4/repo/ADR) → push → Cyrus Windows 验收 | Claude → Cyrus 验收 |
+| **F-LOGIN** | 登录自助改密 + 记住我 30 天 + 忘记密码联系 Cyrus | 2026-04-30 | 🔵 in-progress | Mac 端 4 commit 完成 + push origin；Cyrus Windows 端拉过代码（`ddc4813` chore commit 证明）；待手测 7 条 | Cyrus 验收 |
+| ~~F-OUTBOUND-RENAME~~ | ~~GMV → 出库金额~~ | — | ⚪ **取消** | Cyrus 4/29 改主线，不做 | — |
+| **F-CHANNEL-TOP20** | 渠道 Top 20 板块业务逻辑调整 | TBD | ⚪ 暂搁置 | F-PERF-40C 完成后启动 | Claude |
 | **PR-REVIEW** | Cyrus 审 + 合 PR1-12（按 base 链顺序）→ V2 三件 → V3 四件 | 自定 | 🟡 等 Cyrus 抽时间 | 看 `docs/plans/2026-04-24-pr-review-guide.md` | Cyrus |
 | **PROD-CUTOVER** | PR1-12 全合后按 runbook §4.2 切流量 | PR1-12 全合后 | ⚪ 阻塞 PR-REVIEW | — | Cyrus |
 
