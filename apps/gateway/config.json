@@ -6,8 +6,9 @@
     "user": "ecom_app",
     "password": "ecom123456",
     "ssl": false,
-    "connection_timeout_ms": 10000,
-    "statement_timeout_ms": 120000,
-    "max_pool_size": 10
+    "connection_timeout_ms": 30000,
+    "statement_timeout_ms": 180000,
+    "idle_timeout_ms": 30000,
+    "max_pool_size": 25
   }
 }
