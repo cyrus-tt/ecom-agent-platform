@@ -16,6 +16,12 @@ const appConfig = require("./services/appConfig");
 const runtimeSecrets = require("./services/runtimeSecrets");
 const dispatchModule = require("./services/dispatch");
 const passwordPolicy = require("./lib/passwordPolicy");
+const { Semaphore, limitConcurrency } = require("./lib/concurrencyLimit");
+
+// F-PERF-40C §S6: 重操作并发保护，防止 Excel 导出 / AI 报告生成拖垮普通看板访问
+// Excel 4 个 endpoint 共用 ≤2 / AI 报告 ≤1
+const EXCEL_EXPORT_SEMAPHORE = new Semaphore(2, "excel-export");
+const AI_REPORT_SEMAPHORE = new Semaphore(1, "ai-report");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -1245,6 +1251,15 @@ function startManagedJob(spec) {
     job.status = job.exit_code === 0 ? "succeeded" : "failed";
     job.ended_at = new Date().toISOString();
     RUNNING_JOB_BY_TYPE.delete(type);
+    // F-PERF-40C §S3: rebuild-weekly 成功完成后自动清缓存，避免用户看到旧数据
+    if (type === "rebuild-weekly" && job.status === "succeeded") {
+      try {
+        const result = reportRepo.clearAllCaches();
+        appendJobLog(job, "system", `[cache] cleared after rebuild: ${JSON.stringify(result.before)}`);
+      } catch (err) {
+        appendJobLog(job, "warn", `[cache] clear failed: ${String(err && err.message ? err.message : err)}`);
+      }
+    }
   });
 
   return { job, reused: false };
@@ -1886,6 +1901,17 @@ app.post("/api/admin/refresh-arrival", requireAdmin, async (req, res) => {
   }
 });
 
+// F-PERF-40C §S3: admin 手动清缓存入口（运维 / 调试用；rebuild-weekly 完成会自动清，无需手动）
+app.post("/api/admin/cache/clear", requireAdmin, (req, res) => {
+  try {
+    const result = reportRepo.clearAllCaches();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    const message = String(err && err.message ? err.message : err);
+    res.status(500).json({ ok: false, message });
+  }
+});
+
 app.post("/api/admin/rebuild-weekly", requireAdmin, (req, res) => {
   try {
     if (!fs.existsSync(PG_PIPELINE_SCRIPT)) {
@@ -1969,7 +1995,7 @@ app.get("/api/report/rows", requirePermission("report_daily"), async (req, res, 
   }
 });
 
-app.get("/api/report/export.xlsx", requirePermission("report_daily"), async (req, res, next) => {
+app.get("/api/report/export.xlsx", requirePermission("report_daily"), limitConcurrency(EXCEL_EXPORT_SEMAPHORE), async (req, res, next) => {
   try {
     const { week } = await reportRepo.resolveWeek(req.query.week);
     if (!week) {
@@ -1992,7 +2018,7 @@ app.get("/api/report/export.xlsx", requirePermission("report_daily"), async (req
   }
 });
 
-app.get("/api/report/gap-template.xlsx", requirePermission("report_daily"), async (req, res, next) => {
+app.get("/api/report/gap-template.xlsx", requirePermission("report_daily"), limitConcurrency(EXCEL_EXPORT_SEMAPHORE), async (req, res, next) => {
   try {
     const { week } = await reportRepo.resolveWeek(req.query.week);
     if (!week) {
@@ -2145,7 +2171,7 @@ async function sendDailyExport(req, res, next, options) {
   }
 }
 
-app.get("/api/report-daily/export.xlsx", requirePermission("report_daily"), async (req, res, next) => {
+app.get("/api/report-daily/export.xlsx", requirePermission("report_daily"), limitConcurrency(EXCEL_EXPORT_SEMAPHORE), async (req, res, next) => {
   await sendDailyExport(req, res, next, {
     bookType: "xlsx",
     ext: "xlsx",
@@ -2153,7 +2179,7 @@ app.get("/api/report-daily/export.xlsx", requirePermission("report_daily"), asyn
   });
 });
 
-app.get("/api/report-daily/export.xlsb", requirePermission("report_daily"), async (req, res, next) => {
+app.get("/api/report-daily/export.xlsb", requirePermission("report_daily"), limitConcurrency(EXCEL_EXPORT_SEMAPHORE), async (req, res, next) => {
   await sendDailyExport(req, res, next, {
     bookType: "xlsb",
     ext: "xlsb",
@@ -2329,7 +2355,7 @@ app.get("/api/agent/context", requireAgentContextAccess, async (req, res, next) 
   }
 });
 
-app.post("/api/agent/run", requirePermission("analysis"), express.json({ limit: "1mb" }), async (req, res, next) => {
+app.post("/api/agent/run", requirePermission("analysis"), express.json({ limit: "1mb" }), limitConcurrency(AI_REPORT_SEMAPHORE), async (req, res, next) => {
   try {
     res.setTimeout(95000);
     const body = req.body && typeof req.body === "object" ? req.body : {};
@@ -2563,9 +2589,31 @@ function startServer() {
         }
         await reportRepo.getDashboardOverview("", dashboardDates.default_date_from, dashboardDates.default_date_to);
         console.log(`[warmup] dashboard cache ready for ${dashboardDates.default_date_from}~${dashboardDates.default_date_to}`);
+
+        // F-PERF-40C §S7: 扩充预热到 channel-dashboard 默认参数，让早高峰冷查询全部命中预热缓存
+        try {
+          await reportRepo.getChannelDashboard({
+            anchorDateText: dashboardDates.default_date_from,
+            dateFromText: dashboardDates.default_date_from,
+            dateToText: dashboardDates.default_date_to,
+          });
+          console.log(`[warmup] channel-dashboard cache ready for ${dashboardDates.default_date_from}~${dashboardDates.default_date_to}`);
+        } catch (err) {
+          const msg = String(err && err.message ? err.message : err);
+          console.warn(`[warmup] channel-dashboard cache failed: ${msg}`);
+        }
       } catch (err) {
         const msg = String(err && err.message ? err.message : err);
         console.warn(`[warmup] dashboard cache failed: ${msg}`);
+      }
+
+      // F-PERF-40C §S7: 预热 daily dates 选项缓存（用户打开日报第一件事就是看可选日期）
+      try {
+        await reportRepo.getDailyDateChoices();
+        console.log(`[warmup] daily-dates cache ready`);
+      } catch (err) {
+        const msg = String(err && err.message ? err.message : err);
+        console.warn(`[warmup] daily-dates cache failed: ${msg}`);
       }
     }, 200);
   });

@@ -3362,6 +3362,38 @@ async function getAnalysisReportById(id) {
   };
 }
 
+/**
+ * 清空所有报表缓存（F-PERF-40C §S3）。
+ *
+ * 数据刷新（rebuild-weekly）完成后自动调用 + 暴露给 admin endpoint 让运维手动清。
+ *
+ * 故意不清 IN_FLIGHT Map：
+ *   - 清 IN_FLIGHT 会让正在等待的 promise 永远不被 settle（孤儿 Promise，导致 res 挂住直到 timeout）
+ *   - 让飞行中的请求自然完成（用旧数据返回一次），新请求自然命中清空后的缓存走重查
+ *   - 这是"温和"的清缓存语义，与 rebuild-weekly 业务对齐
+ */
+function clearAllCaches() {
+  const before = {
+    DAILY_UNION_CACHE: DAILY_UNION_CACHE.size,
+    DASHBOARD_OVERVIEW_CACHE: DASHBOARD_OVERVIEW_CACHE.size,
+    DASHBOARD_COMPARE_CACHE: DASHBOARD_COMPARE_CACHE.size,
+    DASHBOARD_DRILLDOWN_CACHE: DASHBOARD_DRILLDOWN_CACHE.size,
+    CHANNEL_DASHBOARD_CACHE: CHANNEL_DASHBOARD_CACHE.size,
+    CHANNEL_DRILLDOWN_CACHE: CHANNEL_DRILLDOWN_CACHE.size,
+    dateChoicesCache: dateChoicesCache && dateChoicesCache.payload ? 1 : 0,
+    dashboardDatesCache: dashboardDatesCache && dashboardDatesCache.payload ? 1 : 0,
+  };
+  DAILY_UNION_CACHE.clear();
+  DASHBOARD_OVERVIEW_CACHE.clear();
+  DASHBOARD_COMPARE_CACHE.clear();
+  DASHBOARD_DRILLDOWN_CACHE.clear();
+  CHANNEL_DASHBOARD_CACHE.clear();
+  CHANNEL_DRILLDOWN_CACHE.clear();
+  dateChoicesCache = { savedAt: 0, payload: null };
+  dashboardDatesCache = { savedAt: 0, payload: null };
+  return { before, cleared_at: new Date().toISOString() };
+}
+
 module.exports = {
   getPool,
   ensureAnalysisReportsTable,
@@ -3389,4 +3421,5 @@ module.exports = {
   getDailyRowsRange,
   getDailyExportRows,
   getDailyExportRowsRange,
+  clearAllCaches,
 };
