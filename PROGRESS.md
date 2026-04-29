@@ -18,7 +18,7 @@
 
 | # | 任务 | 当前状态 | 一句话 |
 |---|------|---------|--------|
-| ① | **F-PERF-40C** 40 并发性能加固（缓存 + 池 + 重任务隔离 + 压测）| 🟡 approved（4/29）→ 待动手 | 8 大 step：single-flight / TTL 缓存 / admin clear / PG 池 25 / ETL ANALYZE / 重操作并发 / 预热扩充 / repo 清理 + 压测 |
+| ① | **F-PERF-40C** 40 并发性能加固（缓存 + 池 + 重任务隔离 + 压测）| 🔵 in-progress（4/29 Mac 端 5 commit 完成 + web build 通过，待 Cyrus Windows 验收） | S1+S2 由 ddc4813 完成；本 PR 落地 S3 缓存清理 / S4 PG 池 25 / S5 ETL ANALYZE / S6 重操作并发（Excel≤2 / AI≤1）/ S7 预热扩充 / S8 repo 清理（-40 万行）+ 40 并发压测脚本 |
 | ② | **F-LOGIN** 登录自助改密 + 记住我 30 天 | 🔵 in-progress（4/28 Mac 端代码完成 + push origin，等 Cyrus Windows 验收） | 登录页加"30 天免登录"勾选 + "忘记密码联系 Cyrus" + 登录后右上角自助改密 |
 | ③ | **F-CHANNEL-TOP20** 渠道 Top 20 板块业务逻辑调整 | ⚪ 暂搁置（4/29 Cyrus 改主线到 F-PERF-40C） | F-PERF-40C 完成后再启动 brainstorm |
 | ~~④~~ | ~~**F-OUTBOUND-RENAME** GMV → 出库金额~~ | ⚪ **取消**（4/29 Cyrus 改主线） | 不做 |
@@ -43,7 +43,7 @@
 
 | 编号 | 任务 | Deadline | 状态 | 下一步 | Owner |
 |---|---|---|---|---|---|
-| **F-PERF-40C** | 40 并发性能加固 · 8 大 step | 2026-05-03 | 🟡 approved | Phase 0 PLAN 落地 → Phase 1 并行 (subagent S5/S8) + 主线 (S2) → Phase 2 主线 sequential (S1/S3/S6/S7) → Phase 3 (S4/repo/ADR) → push → Cyrus Windows 验收 | Claude → Cyrus 验收 |
+| **F-PERF-40C** | 40 并发性能加固 · 8 大 step | 2026-05-03 | 🔵 in-progress | Mac 端 5 个 feature commit + ADR-0020 落地 + Web build 通过；待 Cyrus Windows 端 git pull + start_all.ps1 -RebuildWeb + smoke_all_modules.ps1 + loadtest_40_concurrent.ps1 40 并发压测验收 | Cyrus 验收 |
 | **F-LOGIN** | 登录自助改密 + 记住我 30 天 + 忘记密码联系 Cyrus | 2026-04-30 | 🔵 in-progress | Mac 端 4 commit 完成 + push origin；Cyrus Windows 端拉过代码（`ddc4813` chore commit 证明）；待手测 7 条 | Cyrus 验收 |
 | ~~F-OUTBOUND-RENAME~~ | ~~GMV → 出库金额~~ | — | ⚪ **取消** | Cyrus 4/29 改主线，不做 | — |
 | **F-CHANNEL-TOP20** | 渠道 Top 20 板块业务逻辑调整 | TBD | ⚪ 暂搁置 | F-PERF-40C 完成后启动 | Claude |
