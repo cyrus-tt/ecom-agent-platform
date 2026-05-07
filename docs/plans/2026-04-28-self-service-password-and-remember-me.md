@@ -3,7 +3,7 @@
 **PROGRESS 编号**：F-LOGIN
 **创建于**：2026-04-28
 **Deadline**：2026-04-30
-**状态**：🔵 in-progress（2026-04-28 Mac 端 4 commit 完成 + push origin，等 Cyrus Windows 验收）
+**状态**：✅ done（2026-05-07 Windows 验收通过 + Codex 修 2 commit，Mac 已 pull 同步）
 
 ---
 

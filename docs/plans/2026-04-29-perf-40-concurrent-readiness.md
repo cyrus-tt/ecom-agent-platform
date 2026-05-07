@@ -3,7 +3,7 @@
 **PROGRESS 编号**：F-PERF-40C
 **创建于**：2026-04-29
 **Deadline**：2026-05-03（≤ 4 个工作日）
-**状态**：🔵 in-progress（2026-04-29 Mac 端 5 个 feature commit 完成 + Web build 通过，待 Cyrus Windows 端 git pull + smoke + 40 并发压测验收）
+**状态**：✅ done（2026-05-07 Windows 验收通过 + Codex 修 2 commit，Mac 已 pull 同步）
 
 ---
 

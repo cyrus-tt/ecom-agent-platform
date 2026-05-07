@@ -2,7 +2,7 @@
 
 > **用途**：跟踪当前开发任务、本周焦点、进行中风险。
 > **维护**：每个任务状态变化时同步；每周一刷新"本周焦点"。
-> **最后更新**：2026-04-28
+> **最后更新**：2026-05-07
 
 ---
 
@@ -12,16 +12,16 @@
 > **维护**：每周一整理——完成的从这里删（不删下面详表里的 ✅ 记录），新进行中的从详表挪上来。
 > **过期保护**：若下方"索引日期"距今 > 7 天，视为失效，Claude 必须回去扫详细表。
 >
-> **索引日期**：2026-04-28（周二）　**本周窗口**：4/27–5/3
+> **索引日期**：2026-05-07（周四）　**本周窗口**：5/5–5/11
 
 ### 主线（按优先级）
 
 | # | 任务 | 当前状态 | 一句话 |
 |---|------|---------|--------|
-| ① | **F-PERF-40C** 40 并发性能加固（缓存 + 池 + 重任务隔离 + 压测）| 🔵 in-progress（4/29 Mac 端 5 commit 完成 + web build 通过，待 Cyrus Windows 验收） | S1+S2 由 ddc4813 完成；本 PR 落地 S3 缓存清理 / S4 PG 池 25 / S5 ETL ANALYZE / S6 重操作并发（Excel≤2 / AI≤1）/ S7 预热扩充 / S8 repo 清理（-40 万行）+ 40 并发压测脚本 |
-| ② | **F-LOGIN** 登录自助改密 + 记住我 30 天 | 🔵 in-progress（4/28 Mac 端代码完成 + push origin，等 Cyrus Windows 验收） | 登录页加"30 天免登录"勾选 + "忘记密码联系 Cyrus" + 登录后右上角自助改密 |
-| ③ | **F-CHANNEL-TOP20** 渠道 Top 20 板块业务逻辑调整 | ⚪ 暂搁置（4/29 Cyrus 改主线到 F-PERF-40C） | F-PERF-40C 完成后再启动 brainstorm |
-| ~~④~~ | ~~**F-OUTBOUND-RENAME** GMV → 出库金额~~ | ⚪ **取消**（4/29 Cyrus 改主线） | 不做 |
+| ① | **F-PERF-40C** 40 并发性能加固 | ✅ done（5/7 Windows 验收通过） | 缓存清理 / PG 池 25 / ETL ANALYZE / 重操作并发 / 预热 / repo 清理 + 40 并发压测 |
+| ② | **F-LOGIN** 登录自助改密 + 记住我 30 天 | ✅ done（5/7 Windows 验收通过） | 登录页 30 天免登录 + 忘记密码联系 Cyrus + 右上角自助改密 |
+| ③ | **F-CHANNEL-TOP20** 渠道 Top 20 板块业务逻辑调整 | ⚪ 暂搁置 | 待启动 brainstorm |
+| ~~④~~ | ~~**F-OUTBOUND-RENAME** GMV → 出库金额~~ | ⚪ **取消** | 不做 |
 | ⑤ | **审 + 合 PR1-12 + V2/V3** 历史 7→9 改造交付 | 🟡 待 Cyrus 审 | 见 `docs/plans/2026-04-24-pr-review-guide.md` |
 
 ### 🚨 进行中风险登记（每次开工必看）
@@ -43,8 +43,8 @@
 
 | 编号 | 任务 | Deadline | 状态 | 下一步 | Owner |
 |---|---|---|---|---|---|
-| **F-PERF-40C** | 40 并发性能加固 · 8 大 step | 2026-05-03 | 🔵 in-progress | Mac 端 5 个 feature commit + ADR-0020 落地 + Web build 通过；待 Cyrus Windows 端 git pull + start_all.ps1 -RebuildWeb + smoke_all_modules.ps1 + loadtest_40_concurrent.ps1 40 并发压测验收 | Cyrus 验收 |
-| **F-LOGIN** | 登录自助改密 + 记住我 30 天 + 忘记密码联系 Cyrus | 2026-04-30 | 🔵 in-progress | Mac 端 4 commit 完成 + push origin；Cyrus Windows 端拉过代码（`ddc4813` chore commit 证明）；待手测 7 条 | Cyrus 验收 |
+| **F-PERF-40C** | 40 并发性能加固 · 8 大 step | 2026-05-03 | ✅ done（5/7） | Windows 验收通过 + Codex 修 2 commit（14ac314 + 15b5968） | — |
+| **F-LOGIN** | 登录自助改密 + 记住我 30 天 + 忘记密码联系 Cyrus | 2026-04-30 | ✅ done（5/7） | Windows 验收通过 | — |
 | ~~F-OUTBOUND-RENAME~~ | ~~GMV → 出库金额~~ | — | ⚪ **取消** | Cyrus 4/29 改主线，不做 | — |
 | **F-CHANNEL-TOP20** | 渠道 Top 20 板块业务逻辑调整 | TBD | ⚪ 暂搁置 | F-PERF-40C 完成后启动 | Claude |
 | **PR-REVIEW** | Cyrus 审 + 合 PR1-12（按 base 链顺序）→ V2 三件 → V3 四件 | 自定 | 🟡 等 Cyrus 抽时间 | 看 `docs/plans/2026-04-24-pr-review-guide.md` | Cyrus |
@@ -62,6 +62,13 @@
 - **文档**：18 份 ADR（在 V2/V3 分支）+ 6 份 Cookbook + 3 份 V3 Plan + PR review guide
 - **20 个 codex/mac/* 分支全部 push origin**，19 个子 worktree 已清理
 - **详见**：`/Volumes/tyj/Cyrus/.claude/checkpoints/2026-04-28-01-ecom-uplift-pushed-and-cleaned.md`
+
+### 2026-04-28 ~ 2026-05-07：F-LOGIN + F-PERF-40C 交付
+
+- **F-LOGIN**：登录自助改密 + 记住我 30 天 + 忘记密码联系 Cyrus（4 commit + ADR-0019）
+- **F-PERF-40C**：40 并发性能加固（6 commit + ADR-0020 + 压测脚本）
+- **Codex 在 Windows 端修 2 个 bug**：`14ac314` idle_timeout_ms 生效 + clearAllCaches 重构；`15b5968` DailyReportPage columns 初始化顺序
+- 分支 `codex/mac/feat-login-self-service-password`，待 PR 合入 `feature/dispatch-agent`
 
 ### 2026-04-28：项目治理文件落地
 
