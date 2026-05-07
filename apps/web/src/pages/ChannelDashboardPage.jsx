@@ -2,6 +2,7 @@ import { Button, Card, DatePicker, Empty, Select, Space, Spin, Statistic, Table,
 import dayjs from "dayjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import http from "../api/http";
+import { useAuth } from "../auth/AuthContext";
 import SkuPreview from "../components/SkuPreview";
 import {
   formatInteger,
@@ -93,6 +94,7 @@ function buildStyleSummaryFallback(row) {
 }
 
 export default function ChannelDashboardPage() {
+  const { auth } = useAuth();
   const [loading, setLoading] = useState(false);
   const [salesDates, setSalesDates] = useState([]);
   const [appliedRange, setAppliedRange] = useState([]);
@@ -105,13 +107,22 @@ export default function ChannelDashboardPage() {
   const [panels, setPanels] = useState([]);
   const [styleDrilldowns, setStyleDrilldowns] = useState({});
   const [expandedRowKeysByTable, setExpandedRowKeysByTable] = useState({});
+  const [categoryOptions, setCategoryOptions] = useState([]);
+  const [draftMajorCategory, setDraftMajorCategory] = useState("");
+  const [draftCategory, setDraftCategory] = useState("");
+  const [appliedCategoryFilter, setAppliedCategoryFilter] = useState({ majorCategory: "", category: "" });
   const tableRefs = useRef(new Map());
   const syncingScrollRef = useRef(false);
   const styleDrilldownsRef = useRef({});
   const styleDrilldownRequestRef = useRef(new Map());
 
   useEffect(() => {
-    void loadBoard([], [], []);
+    const defaultChannels = Array.isArray(auth?.defaultChannels) && auth.defaultChannels.length > 0 ? auth.defaultChannels : [];
+    if (defaultChannels.length > 0) setDraftChannels(defaultChannels);
+    http.get("/api/dashboard/filter-options", { params: { _t: Date.now() } })
+      .then((resp) => setCategoryOptions(Array.isArray(resp.data?.categories) ? resp.data.categories : []))
+      .catch(() => {});
+    void loadBoard([], defaultChannels.length > 0 ? defaultChannels : [], [], { majorCategory: "", category: "" });
   }, []);
 
   useEffect(() => {
@@ -146,7 +157,7 @@ export default function ChannelDashboardPage() {
     };
   }, [panels]);
 
-  const loadBoard = async (nextRange, nextChannels, nextComparisonRange = []) => {
+  const loadBoard = async (nextRange, nextChannels, nextComparisonRange = [], catFilter = appliedCategoryFilter) => {
     const dateFrom = nextRange?.[0]?.format?.("YYYY-MM-DD") || "";
     const dateTo = nextRange?.[1]?.format?.("YYYY-MM-DD") || dateFrom;
     const comparisonDateFrom = nextComparisonRange?.[0]?.format?.("YYYY-MM-DD") || "";
@@ -155,16 +166,17 @@ export default function ChannelDashboardPage() {
 
     setLoading(true);
     try {
-      const resp = await http.get("/api/channel-dashboard", {
-        params: {
-          date_from: dateFrom || undefined,
-          date_to: dateTo || undefined,
-          comparison_date_from: comparisonDateFrom || undefined,
-          comparison_date_to: comparisonDateTo || undefined,
-          channels: channelText || undefined,
-          _t: Date.now(),
-        },
-      });
+      const params = {
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined,
+        comparison_date_from: comparisonDateFrom || undefined,
+        comparison_date_to: comparisonDateTo || undefined,
+        channels: channelText || undefined,
+        _t: Date.now(),
+      };
+      if (catFilter.majorCategory) params.major_category = catFilter.majorCategory;
+      if (catFilter.category) params.category = catFilter.category;
+      const resp = await http.get("/api/channel-dashboard", { params });
 
       const payload = resp.data || {};
       const payloadDates = Array.isArray(payload.sales_dates)
@@ -660,15 +672,28 @@ export default function ChannelDashboardPage() {
                 setDraftChannels(Array.isArray(values) ? values.slice(0, MAX_CHANNELS) : []);
               }}
             />
+            <Select style={{ minWidth: 120 }} placeholder="全部大类" value={draftMajorCategory || undefined} allowClear onChange={(v) => { setDraftMajorCategory(v || ""); setDraftCategory(""); }} options={[...new Set(categoryOptions.map((c) => c.major_category))].map((mc) => ({ label: mc, value: mc }))} />
+            {draftMajorCategory ? <Select style={{ minWidth: 120 }} placeholder="全部中类" value={draftCategory || undefined} allowClear onChange={(v) => setDraftCategory(v || "")} options={categoryOptions.filter((c) => c.major_category === draftMajorCategory).map((c) => ({ label: c.category, value: c.category }))} /> : null}
             <Button
               type="primary"
               loading={loading}
               disabled={draftRange.length !== 2 || loading}
-              onClick={() => void loadBoard(draftRange, draftChannels, draftComparisonRange)}
+              onClick={() => {
+                const nextCatFilter = { majorCategory: draftMajorCategory, category: draftCategory };
+                setAppliedCategoryFilter(nextCatFilter);
+                void loadBoard(draftRange, draftChannels, draftComparisonRange, nextCatFilter);
+              }}
             >
               应用筛选
             </Button>
-            <Button disabled={loading} onClick={() => void loadBoard([], [], [])}>
+            <Button disabled={loading} onClick={() => {
+              setDraftMajorCategory("");
+              setDraftCategory("");
+              setAppliedCategoryFilter({ majorCategory: "", category: "" });
+              const defaultChannels = Array.isArray(auth?.defaultChannels) && auth.defaultChannels.length > 0 ? auth.defaultChannels : [];
+              setDraftChannels(defaultChannels);
+              void loadBoard([], defaultChannels, [], { majorCategory: "", category: "" });
+            }}>
               重置
             </Button>
             <Tag color="blue">最多 4 个渠道</Tag>

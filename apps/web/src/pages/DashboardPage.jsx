@@ -4,6 +4,7 @@ import dayjs from "dayjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import http from "../api/http";
+import { useAuth } from "../auth/AuthContext";
 import ChannelCompareSection from "../components/ChannelCompareSection";
 import SkuPreview from "../components/SkuPreview";
 import { formatPercent, formatSmartNumber, formatTextOrDash, TABLE_NUMBER_ALIGN } from "../utils/numbers";
@@ -54,6 +55,7 @@ function normalizePickerRange(values) { return Array.isArray(values) && values.l
 function formatRangeText(values) { return Array.isArray(values) && values.length === 2 && values[0] && values[1] ? `${values[0].format("YYYY-MM-DD")} ~ ${values[1].format("YYYY-MM-DD")}` : "-"; }
 
 export default function DashboardPage() {
+  const { auth } = useAuth();
   const [dates, setDates] = useState([]);
   const [anchorDate, setAnchorDate] = useState("");
   const [overview, setOverview] = useState(null);
@@ -65,6 +67,11 @@ export default function DashboardPage() {
   const [compareDraftChannels, setCompareDraftChannels] = useState([]);
   const [drilldown, setDrilldown] = useState(createEmptyDrilldownState);
   const drilldownRequestRef = useRef(0);
+  const [filterOptions, setFilterOptions] = useState({ channels: [], categories: [] });
+  const [draftChannels, setDraftChannels] = useState([]);
+  const [draftMajorCategory, setDraftMajorCategory] = useState("");
+  const [draftCategory, setDraftCategory] = useState("");
+  const [appliedFilter, setAppliedFilter] = useState({ channels: [], majorCategory: "", category: "" });
 
   useEffect(() => { void loadDates(); }, []);
 
@@ -74,13 +81,17 @@ export default function DashboardPage() {
   };
   const closeDrilldown = () => { resetDrilldown(); };
 
-  const loadOverview = async (nextRange) => {
+  const loadOverview = async (nextRange, filter = appliedFilter) => {
     const start = nextRange?.[0]?.format?.("YYYY-MM-DD") || "";
     const end = nextRange?.[1]?.format?.("YYYY-MM-DD") || start;
     if (!start || !end) return;
     setOverviewLoading(true);
     try {
-      const resp = await http.get("/api/dashboard/overview", { params: { date_from: start, date_to: end, _t: Date.now() } });
+      const params = { date_from: start, date_to: end, _t: Date.now() };
+      if (filter.channels?.length) params.channels = filter.channels.join(",");
+      if (filter.majorCategory) params.major_category = filter.majorCategory;
+      if (filter.category) params.category = filter.category;
+      const resp = await http.get("/api/dashboard/overview", { params });
       const payload = resp.data || null;
       setOverview(payload);
       setAnchorDate(String(payload?.meta?.anchor_date || payload?.date_to || end));
@@ -112,16 +123,26 @@ export default function DashboardPage() {
 
   const loadDates = async () => {
     try {
-      const resp = await http.get("/api/dashboard/dates", { params: { _t: Date.now() } });
-      const list = Array.isArray(resp.data?.sales_dates) ? resp.data.sales_dates : Array.isArray(resp.data?.anchor_dates) ? resp.data.anchor_dates : [];
-      const defaultRange = buildDefaultDateRange(list, resp.data?.default_date_from, resp.data?.default_date_to);
+      const [datesResp, filterResp] = await Promise.all([
+        http.get("/api/dashboard/dates", { params: { _t: Date.now() } }),
+        http.get("/api/dashboard/filter-options", { params: { _t: Date.now() } }).catch(() => ({ data: {} })),
+      ]);
+      const list = Array.isArray(datesResp.data?.sales_dates) ? datesResp.data.sales_dates : Array.isArray(datesResp.data?.anchor_dates) ? datesResp.data.anchor_dates : [];
+      const defaultRange = buildDefaultDateRange(list, datesResp.data?.default_date_from, datesResp.data?.default_date_to);
+      const channels = Array.isArray(filterResp.data?.channels) ? filterResp.data.channels : [];
+      const categories = Array.isArray(filterResp.data?.categories) ? filterResp.data.categories : [];
       setDates(list);
+      setFilterOptions({ channels, categories });
+      const defaultChannels = Array.isArray(auth?.defaultChannels) && auth.defaultChannels.length > 0 ? auth.defaultChannels : [];
+      setDraftChannels(defaultChannels);
+      const initFilter = { channels: defaultChannels, majorCategory: "", category: "" };
+      setAppliedFilter(initFilter);
       setOverviewDraftRange(defaultRange);
       setCompareDraftRange(defaultRange);
       setAnchorDate(defaultRange?.[1]?.format?.("YYYY-MM-DD") || "");
       resetDrilldown();
       if (defaultRange.length === 2) {
-        void loadOverview(defaultRange);
+        void loadOverview(defaultRange, initFilter);
         void loadCompareData({ nextRange: defaultRange, nextChannels: [] });
       }
     } catch (err) {
@@ -132,13 +153,21 @@ export default function DashboardPage() {
   const handleApplyOverviewFilters = async () => {
     if (overviewDraftRange.length !== 2) { message.error("请选择完整的可视化日期区间"); return; }
     closeDrilldown();
-    await loadOverview(overviewDraftRange);
+    const nextFilter = { channels: draftChannels, majorCategory: draftMajorCategory, category: draftCategory };
+    setAppliedFilter(nextFilter);
+    await loadOverview(overviewDraftRange, nextFilter);
   };
   const handleResetOverviewFilters = async () => {
     const defaultRange = buildDefaultDateRange(dates);
+    const defaultChannels = Array.isArray(auth?.defaultChannels) && auth.defaultChannels.length > 0 ? auth.defaultChannels : [];
     setOverviewDraftRange(defaultRange);
+    setDraftChannels(defaultChannels);
+    setDraftMajorCategory("");
+    setDraftCategory("");
+    const nextFilter = { channels: defaultChannels, majorCategory: "", category: "" };
+    setAppliedFilter(nextFilter);
     closeDrilldown();
-    if (defaultRange.length === 2) await loadOverview(defaultRange);
+    if (defaultRange.length === 2) await loadOverview(defaultRange, nextFilter);
   };
   const handleApplyCompareFilters = async () => {
     if (compareDraftRange.length !== 2) { message.error("请选择完整的渠道对比区间"); return; }
@@ -163,7 +192,9 @@ export default function DashboardPage() {
     drilldownRequestRef.current = requestId;
     setDrilldown({ open: true, loading: true, category: safeCategory, level: safeLevel, style: safeStyle, meta: null, summary: null, items: [], total: 0, page, pageSize });
     try {
-      const resp = await http.get("/api/dashboard/drilldown", { params: { anchor_date: anchorDate || undefined, date_from: appliedDateFrom, date_to: appliedDateTo, category: safeCategory, level: safeLevel, style: safeLevel === "sku" ? safeStyle : undefined, page, pageSize, _t: Date.now() } });
+      const drillParams = { anchor_date: anchorDate || undefined, date_from: appliedDateFrom, date_to: appliedDateTo, category: safeCategory, level: safeLevel, style: safeLevel === "sku" ? safeStyle : undefined, page, pageSize, _t: Date.now() };
+      if (appliedFilter.channels?.length) drillParams.channels = appliedFilter.channels.join(",");
+      const resp = await http.get("/api/dashboard/drilldown", { params: drillParams });
       if (drilldownRequestRef.current !== requestId) return;
       setDrilldown({ open: true, loading: false, category: safeCategory, level: safeLevel, style: safeStyle, meta: resp.data?.meta || null, summary: resp.data?.summary || null, items: Array.isArray(resp.data?.items) ? resp.data.items : [], total: Number(resp.data?.total || 0), page: Number(resp.data?.page || page), pageSize: Number(resp.data?.pageSize || pageSize) });
     } catch (err) {
@@ -231,6 +262,9 @@ export default function DashboardPage() {
             <Text type="secondary">支持按任意销售日期区间筛选，核心指标默认对比上一段等长区间。</Text>
             <Space wrap size={10}>
               <RangePicker allowClear={false} value={overviewDraftRange.length === 2 ? overviewDraftRange : null} disabledDate={disabledDate} onChange={(values) => setOverviewDraftRange(normalizePickerRange(values))} />
+              <Select mode="multiple" style={{ minWidth: 200 }} placeholder="全部渠道" maxTagCount={2} value={draftChannels} options={filterOptions.channels.map((ch) => ({ label: ch.label, value: ch.code }))} onChange={setDraftChannels} allowClear />
+              <Select style={{ minWidth: 120 }} placeholder="全部大类" value={draftMajorCategory || undefined} allowClear onChange={(v) => { setDraftMajorCategory(v || ""); setDraftCategory(""); }} options={[...new Set(filterOptions.categories.map((c) => c.major_category))].map((mc) => ({ label: mc, value: mc }))} />
+              {draftMajorCategory ? <Select style={{ minWidth: 120 }} placeholder="全部中类" value={draftCategory || undefined} allowClear onChange={(v) => setDraftCategory(v || "")} options={filterOptions.categories.filter((c) => c.major_category === draftMajorCategory).map((c) => ({ label: c.category, value: c.category }))} /> : null}
               <Button type="primary" loading={overviewLoading} onClick={handleApplyOverviewFilters}>应用筛选</Button>
               <Button onClick={handleResetOverviewFilters} disabled={overviewLoading}>重置</Button>
             </Space>
