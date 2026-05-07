@@ -357,6 +357,65 @@ const CHANNEL_DASHBOARD_DEFAULT_CODES = [];
 const DASHBOARD_COMPARE_MAX_CHANNELS = 2;
 const DASHBOARD_COMPARE_DEFAULT_CODES = [];
 
+function resolveChannelOptions(channelCodes) {
+  if (!Array.isArray(channelCodes) || channelCodes.length === 0) return [];
+  return channelCodes
+    .map((code) => CHANNEL_DASHBOARD_OPTION_MAP.get(String(code).trim().toLowerCase()))
+    .filter(Boolean);
+}
+
+function buildFilteredQtyExpr(channelCodes) {
+  const opts = resolveChannelOptions(channelCodes);
+  if (opts.length === 0) return DASHBOARD_NET_QTY_EXPR;
+  return `(${opts.map((o) => `coalesce(${o.salesQtyKey}, 0)`).join(" + ")})`;
+}
+
+function buildFilteredAmountExpr(channelCodes) {
+  const opts = resolveChannelOptions(channelCodes);
+  if (opts.length === 0) return DASHBOARD_SALES_AMOUNT_EXPR;
+  return `(${opts
+    .map(
+      (o) =>
+        `coalesce(tag_price, 0) * coalesce(${o.salesQtyKey}, 0) * coalesce(nullif(${o.skuDiscountKey}, 0), nullif(${o.styleDiscountKey}, 0), 1)`
+    )
+    .join(" + ")})`;
+}
+
+function buildFilteredTagAmountExpr(channelCodes) {
+  const opts = resolveChannelOptions(channelCodes);
+  if (opts.length === 0) return DASHBOARD_TAG_AMOUNT_EXPR;
+  return `(${opts.map((o) => `coalesce(tag_price, 0) * coalesce(${o.salesQtyKey}, 0)`).join(" + ")})`;
+}
+
+function buildFilteredInventoryExpr(channelCodes) {
+  const opts = resolveChannelOptions(channelCodes);
+  if (opts.length === 0) return "coalesce(inventory_total_qty, 0)";
+  const invKeys = opts.map((o) => o.inventoryQtyKey).filter(Boolean);
+  if (invKeys.length === 0) return "0";
+  return `(${invKeys.map((k) => `coalesce(${k}, 0)`).join(" + ")})`;
+}
+
+function buildCategoryWhereSql(majorCategory, category, paramIndex) {
+  const clauses = [];
+  let idx = paramIndex;
+  if (majorCategory) {
+    clauses.push(`${DASHBOARD_MAJOR_CATEGORY_SQL} = $${idx}`);
+    idx++;
+  }
+  if (category) {
+    clauses.push(`${DASHBOARD_CATEGORY_SQL} = $${idx}`);
+    idx++;
+  }
+  return { sql: clauses.length > 0 ? " and " + clauses.join(" and ") : "", nextIndex: idx };
+}
+
+function buildCategoryParams(majorCategory, category) {
+  const params = [];
+  if (majorCategory) params.push(majorCategory);
+  if (category) params.push(category);
+  return params;
+}
+
 const WEEK_COLUMN_HEADERS = [
   "出库时间",
   "款号",
@@ -990,22 +1049,24 @@ function setDailyUnionCache(dateFrom, dateTo, rows) {
   setMapCache(DAILY_UNION_CACHE, makeDailyUnionCacheKey(dateFrom, dateTo), Array.isArray(rows) ? rows : []);
 }
 
-function makeChannelDashboardCacheKey(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom = "", comparisonDateTo = "") {
-  return `${dateFrom}|${dateTo}|${comparisonDateFrom}|${comparisonDateTo}|${(selectedChannelCodes || []).join(",")}`;
+function makeChannelDashboardCacheKey(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom = "", comparisonDateTo = "", filter = {}) {
+  const mc = filter.majorCategory || "";
+  const cat = filter.category || "";
+  return `${dateFrom}|${dateTo}|${comparisonDateFrom}|${comparisonDateTo}|${(selectedChannelCodes || []).join(",")}|${mc}|${cat}`;
 }
 
-function getChannelDashboardCache(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom = "", comparisonDateTo = "") {
+function getChannelDashboardCache(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom = "", comparisonDateTo = "", filter = {}) {
   return getMapCache(
     CHANNEL_DASHBOARD_CACHE,
-    makeChannelDashboardCacheKey(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom, comparisonDateTo),
+    makeChannelDashboardCacheKey(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom, comparisonDateTo, filter),
     CHANNEL_DASHBOARD_CACHE_TTL_MS
   );
 }
 
-function setChannelDashboardCache(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom, comparisonDateTo, payload) {
+function setChannelDashboardCache(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom, comparisonDateTo, filter, payload) {
   setMapCache(
     CHANNEL_DASHBOARD_CACHE,
-    makeChannelDashboardCacheKey(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom, comparisonDateTo),
+    makeChannelDashboardCacheKey(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom, comparisonDateTo, filter),
     payload
   );
 }
@@ -1186,8 +1247,12 @@ function normalizeDashboardDrilldownLevel(value) {
   return text === "style" || text === "sku" ? text : "";
 }
 
-function buildDashboardDrilldownBaseSql(styleParamIndex) {
+function buildDashboardDrilldownBaseSql(styleParamIndex, channelCodes) {
   const styleFilterSql = styleParamIndex ? `and ${DASHBOARD_STYLE_SQL} = $${styleParamIndex}` : "";
+  const amtExpr = buildFilteredAmountExpr(channelCodes);
+  const qtyExpr = buildFilteredQtyExpr(channelCodes);
+  const tagExpr = buildFilteredTagAmountExpr(channelCodes);
+  const invExpr = buildFilteredInventoryExpr(channelCodes);
   return `
     with sales_sku as (
       select
@@ -1195,10 +1260,10 @@ function buildDashboardDrilldownBaseSql(styleParamIndex) {
         ${DASHBOARD_SKU_SQL} as sku_label,
         max(nullif(trim(product_name), '')) as product_name,
         max(coalesce(tag_price, 0))::numeric as tag_price,
-        coalesce(sum(${DASHBOARD_SALES_AMOUNT_EXPR}), 0)::numeric as gmv,
-        coalesce(sum(${DASHBOARD_NET_QTY_EXPR}), 0)::numeric as qty,
-        coalesce(sum(${DASHBOARD_SALES_AMOUNT_EXPR}), 0)::numeric as discount_num,
-        coalesce(sum(${DASHBOARD_TAG_AMOUNT_EXPR}), 0)::numeric as discount_den
+        coalesce(sum(${amtExpr}), 0)::numeric as gmv,
+        coalesce(sum(${qtyExpr}), 0)::numeric as qty,
+        coalesce(sum(${amtExpr}), 0)::numeric as discount_num,
+        coalesce(sum(${tagExpr}), 0)::numeric as discount_den
       from ${SALES_DAILY_TABLE}
       where sales_date between $1 and $2
         and ${SKU_FILTER_SQL}
@@ -1212,7 +1277,7 @@ function buildDashboardDrilldownBaseSql(styleParamIndex) {
         ${DASHBOARD_SKU_SQL} as sku_label,
         max(nullif(trim(product_name), '')) as product_name,
         max(coalesce(tag_price, 0))::numeric as tag_price,
-        coalesce(sum(inventory_total_qty), 0)::numeric as inventory_qty
+        coalesce(sum(${invExpr}), 0)::numeric as inventory_qty
       from ${INVENTORY_LATEST_TABLE}
       where ${SKU_FILTER_SQL}
         and ${DASHBOARD_CATEGORY_SQL} = $3
@@ -1299,10 +1364,10 @@ function toDashboardSkuDrilldownRow(row) {
   };
 }
 
-async function queryDashboardStyleDrilldown(pool, dateFrom, dateTo, category, page, pageSize) {
+async function queryDashboardStyleDrilldown(pool, dateFrom, dateTo, category, page, pageSize, channelCodes) {
   const offset = (Math.max(1, Number(page) || 1) - 1) * Math.max(1, Number(pageSize) || 20);
   const safePageSize = Math.max(1, Number(pageSize) || 20);
-  const baseSql = buildDashboardDrilldownBaseSql(0);
+  const baseSql = buildDashboardDrilldownBaseSql(0, channelCodes);
   const summaryResult = await timedQuery(
     pool,
     `
@@ -1363,10 +1428,10 @@ async function queryDashboardStyleDrilldown(pool, dateFrom, dateTo, category, pa
   };
 }
 
-async function queryDashboardSkuDrilldown(pool, dateFrom, dateTo, category, style, page, pageSize) {
+async function queryDashboardSkuDrilldown(pool, dateFrom, dateTo, category, style, page, pageSize, channelCodes) {
   const offset = (Math.max(1, Number(page) || 1) - 1) * Math.max(1, Number(pageSize) || 20);
   const safePageSize = Math.max(1, Number(pageSize) || 20);
-  const baseSql = buildDashboardDrilldownBaseSql(4);
+  const baseSql = buildDashboardDrilldownBaseSql(4, channelCodes);
   const summaryResult = await timedQuery(
     pool,
     `
@@ -1408,11 +1473,12 @@ async function queryDashboardSkuDrilldown(pool, dateFrom, dateTo, category, styl
   };
 }
 
-function makeDashboardDrilldownCacheKey({ dateFrom, dateTo, category, level, style, page, pageSize }) {
-  return `${dateFrom}|${dateTo}|${category}|${level}|${style}|${page}|${pageSize}`;
+function makeDashboardDrilldownCacheKey({ dateFrom, dateTo, category, level, style, page, pageSize, channelCodes }) {
+  const ch = Array.isArray(channelCodes) && channelCodes.length > 0 ? channelCodes.slice().sort().join(",") : "";
+  return `${dateFrom}|${dateTo}|${category}|${level}|${style}|${page}|${pageSize}|${ch}`;
 }
 
-async function getDashboardDrilldown({ anchorDateText, dateFromText, dateToText, category, level, style, page, pageSize }) {
+async function getDashboardDrilldown({ anchorDateText, dateFromText, dateToText, category, level, style, page, pageSize, channelCodes }) {
   const safeCategory = toText(category);
   const safeLevel = normalizeDashboardDrilldownLevel(level);
   const safeStyle = toText(style);
@@ -1441,6 +1507,7 @@ async function getDashboardDrilldown({ anchorDateText, dateFromText, dateToText,
     });
   }
 
+  const safeChannelCodes = Array.isArray(channelCodes) ? channelCodes : [];
   const cacheKey = makeDashboardDrilldownCacheKey({
     dateFrom,
     dateTo,
@@ -1449,6 +1516,7 @@ async function getDashboardDrilldown({ anchorDateText, dateFromText, dateToText,
     style: safeLevel === "sku" ? safeStyle : "",
     page: safePage,
     pageSize: safePageSize,
+    channelCodes: safeChannelCodes,
   });
   const cached = getMapCache(DASHBOARD_DRILLDOWN_CACHE, cacheKey, DASHBOARD_CACHE_TTL_MS);
   if (cached) {
@@ -1464,8 +1532,8 @@ async function getDashboardDrilldown({ anchorDateText, dateFromText, dateToText,
     const pool = await getPool();
     const payload =
       safeLevel === "sku"
-        ? await queryDashboardSkuDrilldown(pool, dateFrom, dateTo, safeCategory, safeStyle, safePage, safePageSize)
-        : await queryDashboardStyleDrilldown(pool, dateFrom, dateTo, safeCategory, safePage, safePageSize);
+        ? await queryDashboardSkuDrilldown(pool, dateFrom, dateTo, safeCategory, safeStyle, safePage, safePageSize, safeChannelCodes)
+        : await queryDashboardStyleDrilldown(pool, dateFrom, dateTo, safeCategory, safePage, safePageSize, safeChannelCodes);
     const response = {
       meta: {
         anchor_date: anchorDate,
@@ -1531,7 +1599,7 @@ function buildChannelDashboardInventoryExpr(option, inventoryAlias = "") {
     : `${exclusiveInventorySql} + coalesce(${prefix}inv_huotong_qty, 0) + coalesce(${prefix}inv_shared_qty, 0)`;
 }
 
-function buildChannelDashboardSql(option) {
+function buildChannelDashboardSql(option, catFilterSql = "") {
   const availableInventorySql = buildChannelDashboardInventoryExpr(option);
 
   return `
@@ -1560,7 +1628,7 @@ function buildChannelDashboardSql(option) {
       from ${SALES_DAILY_TABLE}
       where sales_date between $1 and $2
         and ${SKU_FILTER_SQL}
-        and coalesce(${option.salesQtyKey}, 0) <> 0
+        and coalesce(${option.salesQtyKey}, 0) <> 0${catFilterSql}
       group by 1, 2, 3
     ),
     sales_style as (
@@ -1579,7 +1647,7 @@ function buildChannelDashboardSql(option) {
         max(${DASHBOARD_CATEGORY_SQL}) as category_label,
         coalesce(sum(${availableInventorySql}), 0)::numeric as inventory_qty
       from ${INVENTORY_LATEST_TABLE}
-      where ${SKU_FILTER_SQL}
+      where ${SKU_FILTER_SQL}${catFilterSql}
       group by 1
     ),
     top_sku as (
@@ -1599,7 +1667,7 @@ function buildChannelDashboardSql(option) {
       from ${SALES_DAILY_TABLE}
       where sales_date = $2
         and ${SKU_FILTER_SQL}
-        and coalesce(${option.salesQtyKey}, 0) <> 0
+        and coalesce(${option.salesQtyKey}, 0) <> 0${catFilterSql}
     )
     select
       s.style,
@@ -1692,7 +1760,7 @@ function buildChannelDashboardPanels(options, rows, periodDays) {
   });
 }
 
-function buildChannelDashboardCombinedSql(options) {
+function buildChannelDashboardCombinedSql(options, catFilterSql = "") {
   const uniqueKeys = (keys) => [...new Set(keys.filter(Boolean))];
   const salesQtyKeys = uniqueKeys(options.map((item) => item.salesQtyKey));
   const skuDiscountKeys = uniqueKeys(options.map((item) => item.skuDiscountKey));
@@ -1809,14 +1877,14 @@ function buildChannelDashboardCombinedSql(options) {
       from ${SALES_DAILY_TABLE}
       where sales_date between $1 and $2
         and ${SKU_FILTER_SQL}
-        and (${salesFilterSql})
+        and (${salesFilterSql})${catFilterSql}
     ),
     inventory_base as (
       select
         ${DASHBOARD_STYLE_SQL} as style_label,
         ${inventoryBaseColumns}
       from ${INVENTORY_LATEST_TABLE}
-      where ${SKU_FILTER_SQL}
+      where ${SKU_FILTER_SQL}${catFilterSql}
       group by 1
     ),
 ${channelCtes}
@@ -1828,7 +1896,7 @@ ${channelCtes}
   `;
 }
 
-function buildChannelDashboardStyleDrilldownBaseSql(option, styleParamIndex) {
+function buildChannelDashboardStyleDrilldownBaseSql(option, styleParamIndex, catFilterSql = "") {
   const inventoryExpr = buildChannelDashboardInventoryExpr(option);
   const styleFilterSql = styleParamIndex ? `and ${DASHBOARD_STYLE_SQL} = $${styleParamIndex}` : "";
   return `
@@ -1859,7 +1927,7 @@ function buildChannelDashboardStyleDrilldownBaseSql(option, styleParamIndex) {
       from ${SALES_DAILY_TABLE}
       where sales_date between $1 and $2
         and ${SKU_FILTER_SQL}
-        and coalesce(${option.salesQtyKey}, 0) <> 0
+        and coalesce(${option.salesQtyKey}, 0) <> 0${catFilterSql}
         ${styleFilterSql}
       group by 1, 2, 3
     ),
@@ -1872,7 +1940,7 @@ function buildChannelDashboardStyleDrilldownBaseSql(option, styleParamIndex) {
         max(coalesce(tag_price, 0))::numeric as tag_price,
         coalesce(sum(${inventoryExpr}), 0)::numeric as inventory_qty
       from ${INVENTORY_LATEST_TABLE}
-      where ${SKU_FILTER_SQL}
+      where ${SKU_FILTER_SQL}${catFilterSql}
         ${styleFilterSql}
       group by 2, 3
     ),
@@ -1983,6 +2051,7 @@ async function getChannelDashboardStyleDrilldown({
   dateToText,
   channelCode,
   style,
+  filter = {},
 }) {
   const safeChannelCode = toText(channelCode).toLowerCase();
   const safeStyle = toText(style);
@@ -2010,7 +2079,9 @@ async function getChannelDashboardStyleDrilldown({
 
   const pool = await getPool();
   const periodDays = Math.max(1, daysBetweenInclusive(dateFrom, dateTo));
-  const baseSql = buildChannelDashboardStyleDrilldownBaseSql(option, 3);
+  const catWhere = buildCategoryWhereSql(filter.majorCategory, filter.category, 4);
+  const catParams = buildCategoryParams(filter.majorCategory, filter.category);
+  const baseSql = buildChannelDashboardStyleDrilldownBaseSql(option, 3, catWhere.sql);
   const [summaryResult, rowsResult] = await Promise.all([
     timedQuery(
       pool,
@@ -2033,7 +2104,7 @@ async function getChannelDashboardStyleDrilldown({
           coalesce((select gmv from joined order by gmv desc, qty desc, sku_label asc limit 1), 0)::numeric as top_sku_gmv,
           coalesce((select qty from joined order by gmv desc, qty desc, sku_label asc limit 1), 0)::numeric as top_sku_qty
       `,
-      [dateFrom, dateTo, safeStyle],
+      [dateFrom, dateTo, safeStyle, ...catParams],
       `getChannelDashboardStyleDrilldown.summary.${option.code}`
     ),
     timedQuery(
@@ -2052,7 +2123,7 @@ async function getChannelDashboardStyleDrilldown({
         from joined
         order by gmv desc, qty desc, sku asc
       `,
-      [dateFrom, dateTo, safeStyle],
+      [dateFrom, dateTo, safeStyle, ...catParams],
       `getChannelDashboardStyleDrilldown.rows.${option.code}`
     ),
   ]);
@@ -2091,6 +2162,7 @@ async function getChannelDashboard({
   channelCodesText,
   comparisonDateFromText,
   comparisonDateToText,
+  filter = {},
 }) {
   const range = await resolveDashboardRange({
     dateFromText,
@@ -2126,7 +2198,7 @@ async function getChannelDashboard({
     };
   }
 
-  const cached = getChannelDashboardCache(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom, comparisonDateTo);
+  const cached = getChannelDashboardCache(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom, comparisonDateTo, filter);
   if (cached) {
     return {
       sales_dates: anchorDates || [],
@@ -2150,20 +2222,22 @@ async function getChannelDashboard({
       selected_channels: selectedChannelCodes,
       channels: [],
     };
-    setChannelDashboardCache(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom, comparisonDateTo, payload);
+    setChannelDashboardCache(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom, comparisonDateTo, filter, payload);
     return {
       sales_dates: anchorDates || [],
       anchor_dates: anchorDates || [],
       ...payload,
     };
   }
-  const combinedSql = buildChannelDashboardCombinedSql(selectedOptions);
+  const catWhere = buildCategoryWhereSql(filter.majorCategory, filter.category, 3);
+  const catParams = buildCategoryParams(filter.majorCategory, filter.category);
+  const combinedSql = buildChannelDashboardCombinedSql(selectedOptions, catWhere.sql);
   const periodDays = Math.max(1, daysBetweenInclusive(dateFrom, dateTo));
   const comparisonPeriodDays = comparisonDateFrom && comparisonDateTo ? comparisonRange.periodDays : 0;
   const [currentResult, comparisonResult] = await Promise.all([
-    timedQuery(pool, combinedSql, [dateFrom, dateTo], "getChannelDashboard.current"),
+    timedQuery(pool, combinedSql, [dateFrom, dateTo, ...catParams], "getChannelDashboard.current"),
     comparisonDateFrom && comparisonDateTo
-      ? timedQuery(pool, combinedSql, [comparisonDateFrom, comparisonDateTo], "getChannelDashboard.comparison")
+      ? timedQuery(pool, combinedSql, [comparisonDateFrom, comparisonDateTo, ...catParams], "getChannelDashboard.comparison")
       : Promise.resolve({ rows: [] }),
   ]);
   const currentPanels = buildChannelDashboardPanels(selectedOptions, currentResult.rows, periodDays);
@@ -2190,7 +2264,7 @@ async function getChannelDashboard({
     selected_channels: selectedChannelCodes,
     channels,
   };
-  setChannelDashboardCache(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom, comparisonDateTo, payload);
+  setChannelDashboardCache(dateFrom, dateTo, selectedChannelCodes, comparisonDateFrom, comparisonDateTo, filter, payload);
   return {
     sales_dates: anchorDates || [],
     anchor_dates: anchorDates || [],
@@ -2221,11 +2295,13 @@ function getDashboardCompareLabelFallback(dimensionKey) {
   return DASHBOARD_UNCATEGORIZED_LABEL;
 }
 
-function makeDashboardCompareCacheKey(range, selectedChannelCodes) {
-  return `${range.dateFrom}|${range.dateTo}|${range.comparisonFrom}|${range.comparisonTo}|${(selectedChannelCodes || []).join(",")}`;
+function makeDashboardCompareCacheKey(range, selectedChannelCodes, filter = {}) {
+  const mc = filter.majorCategory || "";
+  const cat = filter.category || "";
+  return `${range.dateFrom}|${range.dateTo}|${range.comparisonFrom}|${range.comparisonTo}|${(selectedChannelCodes || []).join(",")}|${mc}|${cat}`;
 }
 
-function buildDashboardCompareDimensionSql(option, dimensionKey) {
+function buildDashboardCompareDimensionSql(option, dimensionKey, catFilterSql = "") {
   const gmvExpr = `
         coalesce(sum(
           coalesce(tag_price, 0) * coalesce(${option.salesQtyKey}, 0) *
@@ -2245,7 +2321,7 @@ function buildDashboardCompareDimensionSql(option, dimensionKey) {
         from ${SALES_DAILY_TABLE}
         where sales_date between $1 and $2
           and ${SKU_FILTER_SQL}
-          and coalesce(${option.salesQtyKey}, 0) <> 0
+          and coalesce(${option.salesQtyKey}, 0) <> 0${catFilterSql}
         group by 1, 2
       ),
       previous_period as (
@@ -2257,7 +2333,7 @@ function buildDashboardCompareDimensionSql(option, dimensionKey) {
         from ${SALES_DAILY_TABLE}
         where sales_date between $3 and $4
           and ${SKU_FILTER_SQL}
-          and coalesce(${option.salesQtyKey}, 0) <> 0
+          and coalesce(${option.salesQtyKey}, 0) <> 0${catFilterSql}
         group by 1, 2
       )
       select
@@ -2291,7 +2367,7 @@ function buildDashboardCompareDimensionSql(option, dimensionKey) {
       from ${SALES_DAILY_TABLE}
       where sales_date between $1 and $2
         and ${SKU_FILTER_SQL}
-        and coalesce(${option.salesQtyKey}, 0) <> 0
+        and coalesce(${option.salesQtyKey}, 0) <> 0${catFilterSql}
       group by 1
     ),
     previous_period as (
@@ -2302,7 +2378,7 @@ function buildDashboardCompareDimensionSql(option, dimensionKey) {
       from ${SALES_DAILY_TABLE}
       where sales_date between $3 and $4
         and ${SKU_FILTER_SQL}
-        and coalesce(${option.salesQtyKey}, 0) <> 0
+        and coalesce(${option.salesQtyKey}, 0) <> 0${catFilterSql}
       group by 1
     )
     select
@@ -2394,11 +2470,12 @@ function toDashboardCompareRows(rows, dimensionKey) {
     });
 }
 
-async function queryDashboardCompareSection(pool, range, option, dimensionKey) {
+async function queryDashboardCompareSection(pool, range, option, dimensionKey, filter = {}) {
+  const catWhere = buildCategoryWhereSql(filter.majorCategory, filter.category, 5);
   const result = await timedQuery(
     pool,
-    buildDashboardCompareDimensionSql(option, dimensionKey),
-    [range.dateFrom, range.dateTo, range.comparisonFrom, range.comparisonTo],
+    buildDashboardCompareDimensionSql(option, dimensionKey, catWhere.sql),
+    [range.dateFrom, range.dateTo, range.comparisonFrom, range.comparisonTo, ...buildCategoryParams(filter.majorCategory, filter.category)],
     `queryDashboardCompareSection.${option.code}.${dimensionKey}`
   );
   const rows = Array.isArray(result.rows) ? result.rows : [];
@@ -2408,11 +2485,11 @@ async function queryDashboardCompareSection(pool, range, option, dimensionKey) {
   };
 }
 
-async function buildDashboardCompareChannel(pool, range, option) {
+async function buildDashboardCompareChannel(pool, range, option, filter = {}) {
   const [season, majorCategory, category] = await Promise.all([
-    queryDashboardCompareSection(pool, range, option, "season"),
-    queryDashboardCompareSection(pool, range, option, "major_category"),
-    queryDashboardCompareSection(pool, range, option, "category"),
+    queryDashboardCompareSection(pool, range, option, "season", filter),
+    queryDashboardCompareSection(pool, range, option, "major_category", filter),
+    queryDashboardCompareSection(pool, range, option, "category", filter),
   ]);
 
   return {
@@ -2427,7 +2504,7 @@ async function buildDashboardCompareChannel(pool, range, option) {
   };
 }
 
-async function getDashboardChannelCompare({ dateFromText, dateToText, channelCodesText }) {
+async function getDashboardChannelCompare({ dateFromText, dateToText, channelCodesText, filter = {} }) {
   const range = await resolveDashboardCompareRange(dateFromText, dateToText);
   const availableChannels = getChannelDashboardAvailableChannels();
   const selectedChannelCodes = normalizeDashboardCompareCodes(channelCodesText);
@@ -2445,7 +2522,7 @@ async function getDashboardChannelCompare({ dateFromText, dateToText, channelCod
     };
   }
 
-  const cacheKey = makeDashboardCompareCacheKey(range, selectedChannelCodes);
+  const cacheKey = makeDashboardCompareCacheKey(range, selectedChannelCodes, filter);
   const cached = getMapCache(DASHBOARD_COMPARE_CACHE, cacheKey, DASHBOARD_CACHE_TTL_MS);
   if (cached) {
     return cached;
@@ -2461,7 +2538,7 @@ async function getDashboardChannelCompare({ dateFromText, dateToText, channelCod
     const selectedOptions = selectedChannelCodes
       .map((code) => CHANNEL_DASHBOARD_OPTION_MAP.get(code))
       .filter(Boolean);
-    const channels = await Promise.all(selectedOptions.map((option) => buildDashboardCompareChannel(pool, range, option)));
+    const channels = await Promise.all(selectedOptions.map((option) => buildDashboardCompareChannel(pool, range, option, filter)));
     const payload = {
       sales_dates: Array.isArray(range.salesDates) ? range.salesDates : [],
       date_from: range.dateFrom,
@@ -2477,34 +2554,39 @@ async function getDashboardChannelCompare({ dateFromText, dateToText, channelCod
   });
 }
 
-async function queryDashboardOverviewMetrics(pool, dateFrom, dateTo, comparisonFrom, comparisonTo) {
+async function queryDashboardOverviewMetrics(pool, dateFrom, dateTo, comparisonFrom, comparisonTo, filter = {}) {
+  const amtExpr = buildFilteredAmountExpr(filter.channelCodes);
+  const qtyExpr = buildFilteredQtyExpr(filter.channelCodes);
+  const tagExpr = buildFilteredTagAmountExpr(filter.channelCodes);
+  const invExpr = buildFilteredInventoryExpr(filter.channelCodes);
+  const catWhere = buildCategoryWhereSql(filter.majorCategory, filter.category, 5);
   const result = await timedQuery(
     pool,
     `
       with inventory as (
-        select coalesce(sum(inventory_total_qty), 0)::numeric as inventory_qty
+        select coalesce(sum(${invExpr}), 0)::numeric as inventory_qty
         from ${INVENTORY_LATEST_TABLE}
-        where ${SKU_FILTER_SQL}
+        where ${SKU_FILTER_SQL}${catWhere.sql}
       ),
       sales as (
         select
-          coalesce(sum(${DASHBOARD_SALES_AMOUNT_EXPR}) filter (where sales_date between $1 and $2), 0)::numeric as current_gmv,
-          coalesce(sum(${DASHBOARD_NET_QTY_EXPR}) filter (where sales_date between $1 and $2), 0)::numeric as current_qty,
-          coalesce(sum(${DASHBOARD_SALES_AMOUNT_EXPR}) filter (where sales_date between $1 and $2), 0)::numeric as current_discount_num,
-          coalesce(sum(${DASHBOARD_TAG_AMOUNT_EXPR}) filter (where sales_date between $1 and $2), 0)::numeric as current_discount_den,
-          coalesce(sum(${DASHBOARD_SALES_AMOUNT_EXPR}) filter (where sales_date between $3 and $4), 0)::numeric as previous_gmv,
-          coalesce(sum(${DASHBOARD_NET_QTY_EXPR}) filter (where sales_date between $3 and $4), 0)::numeric as previous_qty,
-          coalesce(sum(${DASHBOARD_SALES_AMOUNT_EXPR}) filter (where sales_date between $3 and $4), 0)::numeric as previous_discount_num,
-          coalesce(sum(${DASHBOARD_TAG_AMOUNT_EXPR}) filter (where sales_date between $3 and $4), 0)::numeric as previous_discount_den
+          coalesce(sum(${amtExpr}) filter (where sales_date between $1 and $2), 0)::numeric as current_gmv,
+          coalesce(sum(${qtyExpr}) filter (where sales_date between $1 and $2), 0)::numeric as current_qty,
+          coalesce(sum(${amtExpr}) filter (where sales_date between $1 and $2), 0)::numeric as current_discount_num,
+          coalesce(sum(${tagExpr}) filter (where sales_date between $1 and $2), 0)::numeric as current_discount_den,
+          coalesce(sum(${amtExpr}) filter (where sales_date between $3 and $4), 0)::numeric as previous_gmv,
+          coalesce(sum(${qtyExpr}) filter (where sales_date between $3 and $4), 0)::numeric as previous_qty,
+          coalesce(sum(${amtExpr}) filter (where sales_date between $3 and $4), 0)::numeric as previous_discount_num,
+          coalesce(sum(${tagExpr}) filter (where sales_date between $3 and $4), 0)::numeric as previous_discount_den
         from ${SALES_DAILY_TABLE}
         where sales_date between $3 and $2
-          and ${SKU_FILTER_SQL}
+          and ${SKU_FILTER_SQL}${catWhere.sql}
       )
       select *
       from sales
       cross join inventory
     `,
-    [dateFrom, dateTo, comparisonFrom, comparisonTo],
+    [dateFrom, dateTo, comparisonFrom, comparisonTo, ...buildCategoryParams(filter.majorCategory, filter.category)],
     "queryDashboardOverviewMetrics"
   );
 
@@ -2531,7 +2613,10 @@ async function queryDashboardOverviewMetrics(pool, dateFrom, dateTo, comparisonF
   };
 }
 
-async function queryDashboardDailyTrend(pool, dateFrom, dateTo) {
+async function queryDashboardDailyTrend(pool, dateFrom, dateTo, filter = {}) {
+  const amtExpr = buildFilteredAmountExpr(filter.channelCodes);
+  const qtyExpr = buildFilteredQtyExpr(filter.channelCodes);
+  const catWhere = buildCategoryWhereSql(filter.majorCategory, filter.category, 3);
   const result = await timedQuery(
     pool,
     `
@@ -2541,11 +2626,11 @@ async function queryDashboardDailyTrend(pool, dateFrom, dateTo) {
       sales as (
         select
           sales_date,
-          coalesce(sum(${DASHBOARD_SALES_AMOUNT_EXPR}), 0)::numeric as gmv,
-          coalesce(sum(${DASHBOARD_NET_QTY_EXPR}), 0)::numeric as qty
+          coalesce(sum(${amtExpr}), 0)::numeric as gmv,
+          coalesce(sum(${qtyExpr}), 0)::numeric as qty
         from ${SALES_DAILY_TABLE}
         where sales_date between $1 and $2
-          and ${SKU_FILTER_SQL}
+          and ${SKU_FILTER_SQL}${catWhere.sql}
         group by sales_date
       )
       select
@@ -2556,7 +2641,7 @@ async function queryDashboardDailyTrend(pool, dateFrom, dateTo) {
       left join sales on sales.sales_date = days.sales_date
       order by days.sales_date
     `,
-    [dateFrom, dateTo],
+    [dateFrom, dateTo, ...buildCategoryParams(filter.majorCategory, filter.category)],
     "queryDashboardDailyTrend"
   );
 
@@ -2567,7 +2652,10 @@ async function queryDashboardDailyTrend(pool, dateFrom, dateTo) {
   }));
 }
 
-async function queryDashboardWeeklyTrend(pool, dateFrom, dateTo) {
+async function queryDashboardWeeklyTrend(pool, dateFrom, dateTo, filter = {}) {
+  const amtExpr = buildFilteredAmountExpr(filter.channelCodes);
+  const qtyExpr = buildFilteredQtyExpr(filter.channelCodes);
+  const catWhere = buildCategoryWhereSql(filter.majorCategory, filter.category, 3);
   const result = await timedQuery(
     pool,
     `
@@ -2595,11 +2683,11 @@ async function queryDashboardWeeklyTrend(pool, dateFrom, dateTo) {
       sales as (
         select
           ((sales_date - $1::date) / 7) as bucket_index,
-          coalesce(sum(${DASHBOARD_SALES_AMOUNT_EXPR}), 0)::numeric as gmv,
-          coalesce(sum(${DASHBOARD_NET_QTY_EXPR}), 0)::numeric as qty
+          coalesce(sum(${amtExpr}), 0)::numeric as gmv,
+          coalesce(sum(${qtyExpr}), 0)::numeric as qty
         from ${SALES_DAILY_TABLE}
         where sales_date between $1 and $2
-          and ${SKU_FILTER_SQL}
+          and ${SKU_FILTER_SQL}${catWhere.sql}
         group by 1
       )
       select
@@ -2615,7 +2703,7 @@ async function queryDashboardWeeklyTrend(pool, dateFrom, dateTo) {
       left join sales on sales.bucket_index = bucket_ranges.bucket_index
       order by bucket_ranges.bucket_index
     `,
-    [dateFrom, dateTo],
+    [dateFrom, dateTo, ...buildCategoryParams(filter.majorCategory, filter.category)],
     "queryDashboardWeeklyTrend"
   );
 
@@ -2629,14 +2717,16 @@ async function queryDashboardWeeklyTrend(pool, dateFrom, dateTo) {
   }));
 }
 
-async function queryDashboardCategoryStructure(pool, dateFrom, dateTo) {
+async function queryDashboardCategoryStructure(pool, dateFrom, dateTo, filter = {}) {
+  const amtExpr = buildFilteredAmountExpr(filter.channelCodes);
+  const invExpr = buildFilteredInventoryExpr(filter.channelCodes);
   const result = await timedQuery(
     pool,
     `
       with sales as (
         select
           coalesce(nullif(trim(category), ''), '未分类') as category,
-          coalesce(sum(${DASHBOARD_SALES_AMOUNT_EXPR}), 0)::numeric as gmv
+          coalesce(sum(${amtExpr}), 0)::numeric as gmv
         from ${SALES_DAILY_TABLE}
         where sales_date between $1 and $2
           and ${SKU_FILTER_SQL}
@@ -2645,7 +2735,7 @@ async function queryDashboardCategoryStructure(pool, dateFrom, dateTo) {
       inv as (
         select
           coalesce(nullif(trim(category), ''), '未分类') as category,
-          coalesce(sum(inventory_total_qty), 0)::numeric as inventory_qty
+          coalesce(sum(${invExpr}), 0)::numeric as inventory_qty
         from ${INVENTORY_LATEST_TABLE}
         where ${SKU_FILTER_SQL}
         group by 1
@@ -2679,14 +2769,15 @@ async function queryDashboardCategoryStructure(pool, dateFrom, dateTo) {
   });
 }
 
-async function queryDashboardCategoryMovement(pool, dateFrom, dateTo, comparisonFrom, comparisonTo) {
+async function queryDashboardCategoryMovement(pool, dateFrom, dateTo, comparisonFrom, comparisonTo, filter = {}) {
+  const amtExpr = buildFilteredAmountExpr(filter.channelCodes);
   const result = await timedQuery(
     pool,
     `
       with current_period as (
         select
           coalesce(nullif(trim(category), ''), '未分类') as category,
-          coalesce(sum(${DASHBOARD_SALES_AMOUNT_EXPR}), 0)::numeric as gmv
+          coalesce(sum(${amtExpr}), 0)::numeric as gmv
         from ${SALES_DAILY_TABLE}
         where sales_date between $1 and $2
           and ${SKU_FILTER_SQL}
@@ -2695,7 +2786,7 @@ async function queryDashboardCategoryMovement(pool, dateFrom, dateTo, comparison
       prev_period as (
         select
           coalesce(nullif(trim(category), ''), '未分类') as category,
-          coalesce(sum(${DASHBOARD_SALES_AMOUNT_EXPR}), 0)::numeric as gmv
+          coalesce(sum(${amtExpr}), 0)::numeric as gmv
         from ${SALES_DAILY_TABLE}
         where sales_date between $3 and $4
           and ${SKU_FILTER_SQL}
@@ -2744,20 +2835,23 @@ async function queryDashboardCategoryMovement(pool, dateFrom, dateTo, comparison
   return { rising, falling };
 }
 
-function makeDashboardOverviewCacheKey(dateFrom, dateTo) {
-  return `${dateFrom}|${dateTo}`;
+function makeDashboardOverviewCacheKey(dateFrom, dateTo, filter = {}) {
+  const ch = Array.isArray(filter.channelCodes) && filter.channelCodes.length > 0 ? filter.channelCodes.slice().sort().join(",") : "";
+  const mc = filter.majorCategory || "";
+  const cat = filter.category || "";
+  return `${dateFrom}|${dateTo}|${ch}|${mc}|${cat}`;
 }
 
-function getDashboardOverviewCache(dateFrom, dateTo) {
-  const key = makeDashboardOverviewCacheKey(dateFrom, dateTo);
+function getDashboardOverviewCache(dateFrom, dateTo, filter) {
+  const key = makeDashboardOverviewCacheKey(dateFrom, dateTo, filter);
   if (!key) {
     return null;
   }
   return getMapCache(DASHBOARD_OVERVIEW_CACHE, key, DASHBOARD_CACHE_TTL_MS);
 }
 
-function setDashboardOverviewCache(dateFrom, dateTo, payload) {
-  const key = makeDashboardOverviewCacheKey(dateFrom, dateTo);
+function setDashboardOverviewCache(dateFrom, dateTo, filter, payload) {
+  const key = makeDashboardOverviewCacheKey(dateFrom, dateTo, filter);
   if (!key) {
     return;
   }
@@ -2775,7 +2869,7 @@ function buildDashboardKpiNode(currentValue, previousValue, digits = 2) {
   };
 }
 
-async function getDashboardOverview(anchorDateText, dateFromText, dateToText) {
+async function getDashboardOverview(anchorDateText, dateFromText, dateToText, filter = {}) {
   const range = await resolveDashboardRange({
     dateFromText,
     dateToText,
@@ -2816,12 +2910,12 @@ async function getDashboardOverview(anchorDateText, dateFromText, dateToText) {
     };
   }
 
-  const cached = getDashboardOverviewCache(dateFrom, dateTo);
+  const cached = getDashboardOverviewCache(dateFrom, dateTo, filter);
   if (cached) {
     return cached;
   }
 
-  const cacheKey = makeDashboardOverviewCacheKey(dateFrom, dateTo);
+  const cacheKey = makeDashboardOverviewCacheKey(dateFrom, dateTo, filter);
   const inFlight = DASHBOARD_OVERVIEW_IN_FLIGHT.get(cacheKey);
   if (inFlight) {
     return inFlight;
@@ -2829,12 +2923,12 @@ async function getDashboardOverview(anchorDateText, dateFromText, dateToText) {
 
   const request = (async () => {
     const pool = await getPool();
-    const metrics = await queryDashboardOverviewMetrics(pool, dateFrom, dateTo, comparisonFrom, comparisonTo);
+    const metrics = await queryDashboardOverviewMetrics(pool, dateFrom, dateTo, comparisonFrom, comparisonTo, filter);
     const [trendsDaily, trendsWeekly, categoryStructure, categoryMovement] = await Promise.all([
-      queryDashboardDailyTrend(pool, dateFrom, dateTo),
-      queryDashboardWeeklyTrend(pool, dateFrom, dateTo),
-      queryDashboardCategoryStructure(pool, dateFrom, dateTo),
-      queryDashboardCategoryMovement(pool, dateFrom, dateTo, comparisonFrom, comparisonTo),
+      queryDashboardDailyTrend(pool, dateFrom, dateTo, filter),
+      queryDashboardWeeklyTrend(pool, dateFrom, dateTo, filter),
+      queryDashboardCategoryStructure(pool, dateFrom, dateTo, filter),
+      queryDashboardCategoryMovement(pool, dateFrom, dateTo, comparisonFrom, comparisonTo, filter),
     ]);
 
     const payload = {
@@ -2863,7 +2957,7 @@ async function getDashboardOverview(anchorDateText, dateFromText, dateToText) {
       updated_at: new Date().toISOString(),
     };
 
-    setDashboardOverviewCache(dateFrom, dateTo, payload);
+    setDashboardOverviewCache(dateFrom, dateTo, filter, payload);
     return payload;
   })();
 

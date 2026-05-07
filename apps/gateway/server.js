@@ -2242,6 +2242,15 @@ app.get("/api/report-daily/export.xlsb", requirePermission("report_daily"), limi
   });
 });
 
+function parseDashboardFilter(query) {
+  const channelCodes = String(query.channels || "").trim()
+    ? String(query.channels).split(",").map((c) => c.trim()).filter(Boolean)
+    : [];
+  const majorCategory = String(query.major_category || "").trim() || "";
+  const category = String(query.category || "").trim() || "";
+  return { channelCodes, majorCategory, category };
+}
+
 app.get("/api/dashboard/filter-options", requirePermission("dashboard"), async (_req, res, next) => {
   try {
     const channels = reportRepo.getChannelDashboardAvailableChannels();
@@ -2269,7 +2278,8 @@ app.get("/api/dashboard/overview", requirePermission("dashboard"), async (req, r
     const anchorDate = String(req.query.anchor_date || "").trim();
     const dateFrom = String(req.query.date_from || "").trim();
     const dateTo = String(req.query.date_to || "").trim();
-    const payload = await reportRepo.getDashboardOverview(anchorDate, dateFrom, dateTo);
+    const filter = parseDashboardFilter(req.query);
+    const payload = await reportRepo.getDashboardOverview(anchorDate, dateFrom, dateTo, filter);
     res.json({
       ok: true,
       ...payload,
@@ -2286,10 +2296,12 @@ app.get("/api/dashboard/channel-compare", requirePermission("dashboard"), async 
     const rawChannels = Array.isArray(req.query.channels)
       ? req.query.channels.join(",")
       : String(req.query.channels || "").trim();
+    const filter = parseDashboardFilter(req.query);
     const payload = await reportRepo.getDashboardChannelCompare({
       dateFromText: dateFrom,
       dateToText: dateTo,
       channelCodesText: rawChannels,
+      filter,
     });
     res.json({
       ok: true,
@@ -2321,6 +2333,7 @@ app.get("/api/dashboard/drilldown", requirePermission("dashboard"), async (req, 
       return res.status(400).json({ ok: false, message: "style is required when level=sku" });
     }
 
+    const filter = parseDashboardFilter(req.query);
     const payload = await reportRepo.getDashboardDrilldown({
       anchorDateText: anchorDate,
       dateFromText: dateFrom,
@@ -2330,6 +2343,7 @@ app.get("/api/dashboard/drilldown", requirePermission("dashboard"), async (req, 
       style,
       page,
       pageSize,
+      channelCodes: filter.channelCodes,
     });
     res.json({
       ok: true,
@@ -2350,6 +2364,7 @@ app.get("/api/channel-dashboard", requirePermission("channel_dashboard"), async 
     const rawChannels = Array.isArray(req.query.channels)
       ? req.query.channels.join(",")
       : String(req.query.channels || "").trim();
+    const filter = parseDashboardFilter(req.query);
     const payload = await reportRepo.getChannelDashboard({
       anchorDateText: anchorDate,
       dateFromText: dateFrom,
@@ -2357,6 +2372,7 @@ app.get("/api/channel-dashboard", requirePermission("channel_dashboard"), async 
       channelCodesText: rawChannels,
       comparisonDateFromText: comparisonDateFrom,
       comparisonDateToText: comparisonDateTo,
+      filter,
     });
     res.json({
       ok: true,
@@ -2382,12 +2398,14 @@ app.get("/api/channel-dashboard/drilldown", requirePermission("channel_dashboard
       return res.status(400).json({ ok: false, message: "style is required" });
     }
 
+    const filter = parseDashboardFilter(req.query);
     const payload = await reportRepo.getChannelDashboardStyleDrilldown({
       anchorDateText: anchorDate,
       dateFromText: dateFrom,
       dateToText: dateTo,
       channelCode: channel,
       style,
+      filter,
     });
     res.json({
       ok: true,
