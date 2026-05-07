@@ -353,6 +353,9 @@ function isRouteAllowedForAccount(account, pathname) {
   if (routePath.startsWith("/analysis")) {
     return accountHasPermission(account, "analysis");
   }
+  if (routePath.startsWith("/bi")) {
+    return accountHasPermission(account, "bi");
+  }
   if (routePath.startsWith("/admin/accounts")) {
     return account?.is_admin === true;
   }

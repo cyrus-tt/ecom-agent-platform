@@ -280,15 +280,16 @@ export default function ChannelDashboardPage() {
     }));
 
     try {
-      const resp = await http.get("/api/channel-dashboard/drilldown", {
-        params: {
-          date_from: dateFrom,
-          date_to: dateTo,
-          channel: safeChannelCode,
-          style: safeStyle,
-          _t: Date.now(),
-        },
-      });
+      const drillParams = {
+        date_from: dateFrom,
+        date_to: dateTo,
+        channel: safeChannelCode,
+        style: safeStyle,
+        _t: Date.now(),
+      };
+      if (appliedCategoryFilter.majorCategory) drillParams.major_category = appliedCategoryFilter.majorCategory;
+      if (appliedCategoryFilter.category) drillParams.category = appliedCategoryFilter.category;
+      const resp = await http.get("/api/channel-dashboard/drilldown", { params: drillParams });
       if (styleDrilldownRequestRef.current.get(cacheKey) !== requestToken) {
         return;
       }

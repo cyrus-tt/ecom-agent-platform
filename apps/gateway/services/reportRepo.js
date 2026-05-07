@@ -3473,7 +3473,7 @@ function clearAllCaches(reason = "manual") {
 }
 
 async function getAvailableCategories() {
-  const pool = getPool();
+  const pool = await getPool();
   const result = await pool.query(`
     select distinct
       coalesce(nullif(trim(major_category), ''), '未分类') as major_category,

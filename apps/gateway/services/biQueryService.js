@@ -7,7 +7,8 @@ const fs = require("fs");
 const BASE_DIR = path.resolve(__dirname, "..");
 const CONFIG_PATH = path.join(BASE_DIR, "config.json");
 
-const DANGEROUS_SQL_PATTERN = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY|EXECUTE|CALL)\b/i;
+const DANGEROUS_SQL_PATTERN = /\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY|EXECUTE|CALL|INTO)\b/i;
+const DANGEROUS_FUNC_PATTERN = /\b(pg_terminate_backend|pg_cancel_backend|pg_sleep|pg_read_file|pg_read_binary_file|lo_import|lo_export|pg_ls_dir|set_config)\b/i;
 const MAX_ROWS = 5000;
 const STATEMENT_TIMEOUT_MS = 30000;
 const SCHEMA_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -50,6 +51,10 @@ function validateSql(sql) {
   if (DANGEROUS_SQL_PATTERN.test(trimmed)) {
     const match = trimmed.match(DANGEROUS_SQL_PATTERN);
     return { ok: false, message: `禁止执行写操作: ${match ? match[0].toUpperCase() : ""}` };
+  }
+  if (DANGEROUS_FUNC_PATTERN.test(trimmed)) {
+    const match = trimmed.match(DANGEROUS_FUNC_PATTERN);
+    return { ok: false, message: `禁止调用危险函数: ${match ? match[0] : ""}` };
   }
   if (!/^\s*SELECT\b/i.test(trimmed) && !/^\s*WITH\b/i.test(trimmed)) {
     return { ok: false, message: "仅允许 SELECT / WITH 查询" };
