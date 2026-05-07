@@ -142,6 +142,8 @@ function normalizeAuthAccount(raw, fallbackUsername, fallbackPasswordHash, index
     password_hash: passwordHash,
     is_admin: raw.is_admin !== false,
     permissions: normalizePermissionKeys(raw.permissions, fallbackPermissions),
+    default_channels: Array.isArray(raw.default_channels) ? raw.default_channels.filter((c) => typeof c === "string" && c) : [],
+    default_categories: Array.isArray(raw.default_categories) ? raw.default_categories.filter((c) => typeof c === "string" && c) : [],
   };
 }
 
@@ -371,6 +373,8 @@ function exportAuthConfig(authStore = getAuthStore()) {
       password_hash: account.password_hash,
       is_admin: account.id === authStore.primary_admin_id,
       permissions: account.id === authStore.primary_admin_id ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account.permissions, []),
+      default_channels: Array.isArray(account.default_channels) ? account.default_channels : [],
+      default_categories: Array.isArray(account.default_categories) ? account.default_categories : [],
     })),
   };
 }
@@ -414,6 +418,8 @@ function sanitizeAccountForClient(account) {
     is_primary_admin: isPrimaryAdminAccount(account.id),
     permissions: account.is_admin === true ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account.permissions, []),
     preferred_route: resolvePreferredRouteForAccount(account),
+    default_channels: Array.isArray(account.default_channels) ? account.default_channels : [],
+    default_categories: Array.isArray(account.default_categories) ? account.default_categories : [],
   };
 }
 
@@ -425,6 +431,8 @@ function cloneAccountForMutation(account) {
     password_hash: account.password_hash,
     is_admin: account.is_admin === true,
     permissions: normalizePermissionKeys(account.permissions, []),
+    default_channels: Array.isArray(account.default_channels) ? [...account.default_channels] : [],
+    default_categories: Array.isArray(account.default_categories) ? [...account.default_categories] : [],
   };
 }
 
@@ -465,7 +473,7 @@ function updateAuthStore(mutator) {
   return persistAuthStore(buildAuthStore(draft));
 }
 
-function createManagedAccount({ name, password, permissions }) {
+function createManagedAccount({ name, password, permissions, default_channels, default_categories }) {
   const nextPassword = validateAccountPassword(password);
   const nextStore = updateAuthStore((draft) => {
     const nextName = validateAccountName(name, draft.accounts);
@@ -476,6 +484,8 @@ function createManagedAccount({ name, password, permissions }) {
       password_hash: sha256(nextPassword),
       is_admin: false,
       permissions: normalizePermissionKeys(permissions, []),
+      default_channels: Array.isArray(default_channels) ? default_channels.filter((c) => typeof c === "string" && c) : [],
+      default_categories: Array.isArray(default_categories) ? default_categories.filter((c) => typeof c === "string" && c) : [],
     });
   });
   return nextStore.accounts[nextStore.accounts.length - 1] || null;
@@ -503,6 +513,22 @@ function updateManagedAccountPassword(accountId, password) {
       throw new Error("account not found");
     }
     target.password_hash = sha256(nextPassword);
+  });
+  return getAuthAccountById(accountId);
+}
+
+function updateManagedAccountDefaults(accountId, { default_channels, default_categories }) {
+  updateAuthStore((draft) => {
+    const target = draft.accounts.find((item) => item.id === accountId);
+    if (!target) {
+      throw new Error("account not found");
+    }
+    if (Array.isArray(default_channels)) {
+      target.default_channels = default_channels.filter((c) => typeof c === "string" && c);
+    }
+    if (Array.isArray(default_categories)) {
+      target.default_categories = default_categories.filter((c) => typeof c === "string" && c);
+    }
   });
   return getAuthAccountById(accountId);
 }
@@ -690,6 +716,8 @@ function createSession(account, options = {}) {
         permissions: account?.is_admin === true ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account?.permissions, []),
         shared_username: authStore.username,
         preferred_route: resolvePreferredRouteForAccount(account),
+        default_channels: Array.isArray(account?.default_channels) ? account.default_channels : [],
+        default_categories: Array.isArray(account?.default_categories) ? account.default_categories : [],
       }
     : null;
 }
@@ -758,6 +786,8 @@ function getSessionByRequest(req) {
     preferred_route: resolvePreferredRouteForAccount(account),
     created_at: Number(session.created_at || Date.now()),
     expires_at: Number(session.expires_at || 0),
+    default_channels: Array.isArray(account.default_channels) ? account.default_channels : [],
+    default_categories: Array.isArray(account.default_categories) ? account.default_categories : [],
   };
 }
 
@@ -827,6 +857,8 @@ function buildAuthMePayload(session) {
     shared_username: session.shared_username || getAuthStore().username,
     preferred_route: session.preferred_route || resolvePreferredRouteForPermissions(session.permissions),
     expires_at: new Date(session.expires_at).toISOString(),
+    default_channels: Array.isArray(session.default_channels) ? session.default_channels : [],
+    default_categories: Array.isArray(session.default_categories) ? session.default_categories : [],
   };
 }
 
@@ -1669,6 +1701,7 @@ app.get("/api/admin/accounts", requireAdmin, (_req, res) => {
     shared_username: authStore.username,
     primary_admin_id: authStore.primary_admin_id,
     modules: AUTH_PERMISSION_MODULES,
+    available_channels: reportRepo.getChannelDashboardAvailableChannels(),
     accounts: authStore.accounts.map((account) => sanitizeAccountForClient(account)),
   });
 });
@@ -1679,6 +1712,8 @@ app.post("/api/admin/accounts", requireAdmin, express.json({ limit: "256kb" }), 
       name: req.body?.name,
       password: req.body?.password,
       permissions: req.body?.permissions,
+      default_channels: req.body?.default_channels,
+      default_categories: req.body?.default_categories,
     });
     return res.status(201).json({
       ok: true,
@@ -1709,6 +1744,26 @@ app.patch("/api/admin/accounts/:accountId/permissions", requireAdmin, express.js
 app.patch("/api/admin/accounts/:accountId/password", requireAdmin, express.json({ limit: "256kb" }), (req, res) => {
   try {
     const account = updateManagedAccountPassword(req.params.accountId, req.body?.password);
+    if (!account) {
+      return res.status(404).json({ ok: false, message: "account not found" });
+    }
+    return res.json({
+      ok: true,
+      account: sanitizeAccountForClient(account),
+    });
+  } catch (err) {
+    const message = String(err?.message || err);
+    const status = message === "account not found" ? 404 : 400;
+    return res.status(status).json({ ok: false, message });
+  }
+});
+
+app.patch("/api/admin/accounts/:accountId/defaults", requireAdmin, express.json({ limit: "256kb" }), (req, res) => {
+  try {
+    const account = updateManagedAccountDefaults(req.params.accountId, {
+      default_channels: req.body?.default_channels,
+      default_categories: req.body?.default_categories,
+    });
     if (!account) {
       return res.status(404).json({ ok: false, message: "account not found" });
     }
@@ -2185,6 +2240,16 @@ app.get("/api/report-daily/export.xlsb", requirePermission("report_daily"), limi
     ext: "xlsb",
     contentType: "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
   });
+});
+
+app.get("/api/dashboard/filter-options", requirePermission("dashboard"), async (_req, res, next) => {
+  try {
+    const channels = reportRepo.getChannelDashboardAvailableChannels();
+    const categories = await reportRepo.getAvailableCategories();
+    res.json({ ok: true, channels, categories });
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.get("/api/dashboard/dates", requirePermission("dashboard"), async (_req, res, next) => {

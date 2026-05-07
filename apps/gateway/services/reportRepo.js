@@ -3378,6 +3378,22 @@ function clearAllCaches(reason = "manual") {
   return clearReportCaches(reason);
 }
 
+async function getAvailableCategories() {
+  const pool = getPool();
+  const result = await pool.query(`
+    select distinct
+      coalesce(nullif(trim(major_category), ''), '未分类') as major_category,
+      coalesce(nullif(trim(category), ''), '未分类') as category
+    from ${SALES_DAILY_TABLE}
+    where ${SKU_FILTER_SQL}
+    order by major_category, category
+  `);
+  return (result.rows || []).map((r) => ({
+    major_category: r.major_category,
+    category: r.category,
+  }));
+}
+
 module.exports = {
   getPool,
   ensureAnalysisReportsTable,
@@ -3405,6 +3421,8 @@ module.exports = {
   getDailyRowsRange,
   getDailyExportRows,
   getDailyExportRowsRange,
+  getChannelDashboardAvailableChannels,
+  getAvailableCategories,
   getCacheStats,
   clearReportCaches,
   clearAllCaches,
