@@ -3,7 +3,7 @@
 **PROGRESS 编号**：F-DASH-FILTER
 **创建于**：2026-05-07
 **Deadline**：2026-05-14
-**状态**：🟡 approved（2026-05-07 Cyrus 确认：默认选中 + 可手动切换语义）
+**状态**：🔵 in-progress（2026-05-07 Mac 端 S1-S9 全完成 + push origin，待 Cyrus Windows 验收）
 
 ---
 

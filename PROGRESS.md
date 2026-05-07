@@ -20,9 +20,10 @@
 |---|------|---------|--------|
 | ① | **F-PERF-40C** 40 并发性能加固 | ✅ done（5/7 Windows 验收通过） | 缓存清理 / PG 池 25 / ETL ANALYZE / 重操作并发 / 预热 / repo 清理 + 40 并发压测 |
 | ② | **F-LOGIN** 登录自助改密 + 记住我 30 天 | ✅ done（5/7 Windows 验收通过） | 登录页 30 天免登录 + 忘记密码联系 Cyrus + 右上角自助改密 |
-| ③ | **F-CHANNEL-TOP20** 渠道 Top 20 板块业务逻辑调整 | ⚪ 暂搁置 | 待启动 brainstorm |
-| ~~④~~ | ~~**F-OUTBOUND-RENAME** GMV → 出库金额~~ | ⚪ **取消** | 不做 |
-| ⑤ | **审 + 合 PR1-12 + V2/V3** 历史 7→9 改造交付 | 🟡 待 Cyrus 审 | 见 `docs/plans/2026-04-24-pr-review-guide.md` |
+| ③ | **F-DASH-FILTER** 看板渠道+品类筛选基础设施 | 🔵 in-progress（5/7 Mac 端完成，待 Windows 验收） | 渠道/品类筛选 + Admin 默认渠道 + Dashboard/ChannelDashboard UI |
+| ④ | **F-CHANNEL-TOP20** 渠道 Top 20 板块业务逻辑调整 | ⚪ 暂搁置 | 待启动 brainstorm |
+| ~~⑤~~ | ~~**F-OUTBOUND-RENAME** GMV → 出库金额~~ | ⚪ **取消** | 不做 |
+| ⑥ | **审 + 合 PR1-12 + V2/V3** 历史 7→9 改造交付 | 🟡 待 Cyrus 审 | 见 `docs/plans/2026-04-24-pr-review-guide.md` |
 
 ### 🚨 进行中风险登记（每次开工必看）
 
