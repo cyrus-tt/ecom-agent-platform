@@ -1,6 +1,7 @@
 import {
   BarChartOutlined,
   FileTextOutlined,
+  FundProjectionScreenOutlined,
   HomeOutlined,
   InboxOutlined,
   SettingOutlined,
@@ -23,6 +24,7 @@ import ChannelDashboardPage from "./pages/ChannelDashboardPage";
 import DailyReportPage from "./pages/DailyReportPage";
 import DashboardPage from "./pages/DashboardPage";
 import DispatchPage from "./pages/DispatchPage";
+import BiPage from "./pages/BiPage";
 import NoAccessPage from "./pages/NoAccessPage";
 import PortalPage from "./pages/PortalPage";
 
@@ -36,6 +38,7 @@ const MODULE_ICON_MAP = {
   dashboard: <BarChartOutlined />,
   channel_dashboard: <ShopOutlined />,
   analysis: <FileTextOutlined />,
+  bi: <FundProjectionScreenOutlined />,
   dispatch: <SwapOutlined />,
 };
 
@@ -247,6 +250,14 @@ function AppShell() {
             element={
               <GuardedElement permission="analysis">
                 <AnalysisPage />
+              </GuardedElement>
+            }
+          />
+          <Route
+            path="/bi"
+            element={
+              <GuardedElement permission="bi">
+                <BiPage />
               </GuardedElement>
             }
           />

@@ -14,6 +14,7 @@ const agentSkills = require("./services/agentSkills");
 const analysisContextProvider = require("./services/analysisContextProvider");
 const appConfig = require("./services/appConfig");
 const runtimeSecrets = require("./services/runtimeSecrets");
+const biQueryService = require("./services/biQueryService");
 const dispatchModule = require("./services/dispatch");
 const passwordPolicy = require("./lib/passwordPolicy");
 const { Semaphore, limitConcurrency } = require("./lib/concurrencyLimit");
@@ -63,6 +64,7 @@ const AUTH_PERMISSION_MODULES = [
   { key: "dashboard", label: "可视化", route: "/dashboard", description: "综合数据可视化看板" },
   { key: "channel_dashboard", label: "渠道", route: "/channel-dashboard", description: "渠道店铺看板" },
   { key: "analysis", label: "分析", route: "/analysis", description: "AI 经营分析与历史报告" },
+  { key: "bi", label: "数据透视", route: "/bi", description: "AI 生成 SQL + 拖拽透视表" },
   ...(dispatchModule.isEnabled() ? [dispatchModule.PERMISSION_MODULE] : []),
 ];
 
@@ -2250,6 +2252,93 @@ function parseDashboardFilter(query) {
   const category = String(query.category || "").trim() || "";
   return { channelCodes, majorCategory, category };
 }
+
+// ── ChatBI endpoints ──
+
+app.get("/api/bi/schema", requirePermission("bi"), async (_req, res, next) => {
+  try {
+    const schema = await biQueryService.getSchemaInfo();
+    res.json({ ok: true, tables: schema });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/api/bi/query", requirePermission("bi"), express.json({ limit: "64kb" }), async (req, res) => {
+  try {
+    const sql = String(req.body?.sql || "").trim();
+    const result = await biQueryService.executeBiQuery(sql);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    const message = String(err?.message || err);
+    const isTimeout = message.includes("timeout") || message.includes("cancel");
+    res.status(isTimeout ? 504 : 400).json({ ok: false, message });
+  }
+});
+
+app.post("/api/bi/ask", requirePermission("bi"), express.json({ limit: "64kb" }), async (req, res) => {
+  const question = String(req.body?.question || "").trim();
+  if (!question) {
+    return res.status(400).json({ ok: false, message: "question is required" });
+  }
+  const apiKey = runtimeSecrets.getDeepseekApiKey();
+  if (!apiKey) {
+    return res.status(503).json({ ok: false, message: "AI 服务未配置 API Key" });
+  }
+  try {
+    const { OpenAI } = require("openai");
+    const schema = await biQueryService.getSchemaInfo();
+    const schemaText = biQueryService.buildSchemaPromptText(schema);
+    const client = new OpenAI({
+      apiKey,
+      baseURL: String(process.env.DEEPSEEK_BASE_URL || runtimeSecrets.DEFAULT_DEEPSEEK_BASE_URL),
+    });
+    const systemPrompt = [
+      "你是安踏电商数据库 SQL 专家。用户会用自然语言描述数据需求，你需要生成 PostgreSQL SELECT 查询。",
+      "",
+      "规则：",
+      "1. 只能生成 SELECT 语句（可用 WITH CTE），禁止任何写操作",
+      `2. 必须包含 LIMIT（最大 ${biQueryService.MAX_ROWS}）`,
+      "3. 所有表都在 anta_daily schema 下，查询时必须加 schema 前缀 anta_daily.",
+      "4. 返回 JSON 格式，包含 sql、pivotConfig、title 三个字段",
+      "5. pivotConfig 格式：{ rows: [列名数组], cols: [列名数组], vals: [列名数组], aggregatorName: '聚合方式' }",
+      "6. aggregatorName 可选值：Sum, Count, Average, Maximum, Minimum",
+      "7. 业务术语：出库金额=sales_total_amount, 销量=sales_total_qty, 吊牌价=tag_price, 渠道=各 sales_xxx_qty 列",
+      "",
+      "数据库表结构：",
+      schemaText,
+      "",
+      "只返回 JSON，不要任何解释文字。",
+    ].join("\n");
+    const completion = await client.chat.completions.create({
+      model: String(process.env.DEEPSEEK_MODEL || runtimeSecrets.DEFAULT_DEEPSEEK_MODEL),
+      temperature: 0.1,
+      max_tokens: 2000,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: question },
+      ],
+    }, { timeout: 60000 });
+    const raw = String(completion.choices?.[0]?.message?.content || "").trim();
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return res.status(500).json({ ok: false, message: "AI 返回格式异常", raw });
+    }
+    const parsed = JSON.parse(jsonMatch[0]);
+    res.json({
+      ok: true,
+      sql: String(parsed.sql || ""),
+      pivotConfig: parsed.pivotConfig || {},
+      title: String(parsed.title || ""),
+      model: String(completion.model || ""),
+    });
+  } catch (err) {
+    const message = String(err?.message || err);
+    res.status(500).json({ ok: false, message });
+  }
+});
+
+// ── Dashboard endpoints ──
 
 app.get("/api/dashboard/filter-options", requirePermission("dashboard"), async (_req, res, next) => {
   try {
