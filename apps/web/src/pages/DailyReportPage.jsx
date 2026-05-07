@@ -178,6 +178,7 @@ export default function DailyReportPage() {
   const loadRequestRef = useRef(0);
   const tableShellRef = useRef(null);
   const [isGroupHeaderCollapsed, setIsGroupHeaderCollapsed] = useState(false);
+  const columns = useMemo(() => buildDailyColumns(meta), [meta]);
 
   useEffect(() => {
     void initPage();
@@ -220,7 +221,6 @@ export default function DailyReportPage() {
     };
   }, [columns.length, rows.length, page, pageSize]);
 
-  const columns = useMemo(() => buildDailyColumns(meta), [meta]);
   const dataSource = useMemo(
     () =>
       rows.map((values, index) => ({
