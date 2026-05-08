@@ -64,7 +64,7 @@ const AUTH_PERMISSION_MODULES = [
   { key: "dashboard", label: "可视化", route: "/dashboard", description: "综合数据可视化看板" },
   { key: "channel_dashboard", label: "渠道", route: "/channel-dashboard", description: "渠道店铺看板" },
   { key: "analysis", label: "分析", route: "/analysis", description: "AI 经营分析与历史报告" },
-  { key: "bi", label: "数据透视", route: "/bi", description: "AI 生成 SQL + 拖拽透视表" },
+  { key: "bi", label: "ChatBI", route: "/bi", description: "AI 生成 SQL + 拖拽透视表" },
   ...(dispatchModule.isEnabled() ? [dispatchModule.PERMISSION_MODULE] : []),
 ];
 
@@ -2710,6 +2710,10 @@ app.get(["/report-daily", "/report-daily/"], requirePermission("report_daily"), 
 });
 
 app.get(["/analysis", "/analysis/"], requirePermission("analysis"), (_req, res) => {
+  sendReactApp(res);
+});
+
+app.get(["/bi", "/bi/"], requirePermission("bi"), (_req, res) => {
   sendReactApp(res);
 });
 

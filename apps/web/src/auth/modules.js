@@ -45,6 +45,13 @@ export const APP_MODULES = [
     description: "AI 经营分析与历史报告",
   },
   {
+    key: "bi",
+    label: "ChatBI",
+    path: "/bi",
+    menuKey: "/bi",
+    description: "AI 生成 SQL + 拖拽透视表",
+  },
+  {
     key: "dispatch",
     label: "调拨",
     path: "/dispatch",

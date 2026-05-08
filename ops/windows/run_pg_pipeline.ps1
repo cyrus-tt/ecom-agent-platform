@@ -368,6 +368,51 @@ try {
     Write-Warning "[PG] 06_postgres_post_etl_analyze.sql failed (continuing): $($_.Exception.Message)"
   }
 
+  # ChatBI readonly user is preferred for AI-generated SQL. Creating roles needs a PG
+  # admin/CREATEROLE account, so support explicit admin env vars and otherwise skip
+  # with a precise warning. The gateway still wraps BI fallback queries in READ ONLY
+  # transactions when this role is not available.
+  $biReadonlySql = ".\sql\07_bi_readonly_user.sql"
+  if (Test-Path $biReadonlySql) {
+    $pgAdminUser = [string]$env:PG_ADMIN_USER
+    $pgAdminPassword = [string]$env:PG_ADMIN_PASSWORD
+    if (-not [string]::IsNullOrWhiteSpace($pgAdminUser)) {
+      $previousPgPassword = [string]$env:PGPASSWORD
+      if (-not [string]::IsNullOrWhiteSpace($pgAdminPassword)) {
+        $env:PGPASSWORD = $pgAdminPassword
+      }
+      $pgAdminArgs = @(
+        "-X",
+        "-q",
+        "-h", "127.0.0.1",
+        "-p", "5432",
+        "-U", $pgAdminUser,
+        "-d", "ecom_dashboard_v2",
+        "-v", "ON_ERROR_STOP=1"
+      )
+      try {
+        Invoke-CheckedCommand -Label "07_bi_readonly_user.sql" -FilePath $psqlPath -Arguments ($pgAdminArgs + @("-f", $biReadonlySql))
+      }
+      finally {
+        if ($previousPgPassword) {
+          $env:PGPASSWORD = $previousPgPassword
+        }
+        else {
+          Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+        }
+      }
+    }
+    else {
+      $canCreateRoles = Invoke-PsqlScalar -Sql "select case when rolsuper or rolcreaterole then 1 else 0 end from pg_roles where rolname = current_user;" -Default "0" -AllowFailure
+      if ($canCreateRoles -eq "1") {
+        Invoke-CheckedCommand -Label "07_bi_readonly_user.sql" -FilePath $psqlPath -Arguments ($pgArgs + @("-f", $biReadonlySql))
+      }
+      else {
+        Write-Warning "[PG] skipped 07_bi_readonly_user.sql: current DB user cannot create roles. Set PG_ADMIN_USER/PG_ADMIN_PASSWORD to apply it."
+      }
+    }
+  }
+
   $afterVisibleSkuCount = Get-VisibleSkuCount
   $afterVisibleSkus = @(Get-VisibleSkuList)
   $newVisibleSkus = @()
