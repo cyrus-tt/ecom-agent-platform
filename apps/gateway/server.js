@@ -2258,6 +2258,51 @@ function parseDashboardFilter(query) {
 
 // ── ChatBI endpoints ──
 
+app.get("/api/bi/datasets", requirePermission("bi"), (_req, res) => {
+  res.json({ ok: true, datasets: Object.values(biQueryService.PRESET_DATASETS) });
+});
+
+app.post("/api/bi/dataset", requirePermission("bi"), express.json({ limit: "64kb" }), async (req, res) => {
+  try {
+    const key = String(req.body?.key || "").trim();
+    const dateFrom = String(req.body?.date_from || "").trim();
+    const dateTo = String(req.body?.date_to || "").trim();
+    const result = await biQueryService.queryPresetDataset(key, dateFrom, dateTo);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: String(err?.message || err) });
+  }
+});
+
+app.get("/api/bi/templates", requirePermission("bi"), (req, res) => {
+  const accountId = String(req.authSession?.account_id || "");
+  res.json({ ok: true, templates: biQueryService.getTemplatesByAccount(accountId) });
+});
+
+app.post("/api/bi/templates", requirePermission("bi"), express.json({ limit: "64kb" }), (req, res) => {
+  try {
+    const accountId = String(req.authSession?.account_id || "");
+    const tpl = biQueryService.saveTemplate(accountId, {
+      name: req.body?.name,
+      dataset_key: req.body?.dataset_key,
+      pivotState: req.body?.pivotState,
+    });
+    res.status(201).json({ ok: true, template: tpl });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: String(err?.message || err) });
+  }
+});
+
+app.delete("/api/bi/templates/:id", requirePermission("bi"), (req, res) => {
+  try {
+    const accountId = String(req.authSession?.account_id || "");
+    biQueryService.deleteTemplate(accountId, req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: String(err?.message || err) });
+  }
+});
+
 app.get("/api/bi/schema", requirePermission("bi"), async (_req, res, next) => {
   try {
     const schema = await biQueryService.getSchemaInfo();
