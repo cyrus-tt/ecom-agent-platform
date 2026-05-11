@@ -3,7 +3,7 @@
 **PROGRESS 编号**：F-CHATBI-V2
 **创建于**：2026-05-10
 **Deadline**：2026-05-14
-**状态**：🟡 approved（2026-05-10 Cyrus 确认 A+C 方案 + 3 个预设数据集）
+**状态**：🔵 in-progress（2026-05-10 Mac 端完成 + push origin，待 Windows 验收）
 
 ---
 

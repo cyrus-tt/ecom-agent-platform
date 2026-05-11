@@ -135,12 +135,6 @@ function ManualPivotTab() {
               if (tpl) handleLoadTemplate(tpl);
             }}
             options={templates.map((t) => ({ label: t.name, value: t.id }))}
-            dropdownRender={(menu) => (
-              <>
-                {menu}
-                {templates.map((t) => null)}
-              </>
-            )}
             optionRender={(option) => {
               const tpl = templates.find((t) => t.id === option.value);
               return (

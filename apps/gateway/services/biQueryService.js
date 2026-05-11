@@ -78,21 +78,6 @@ const COLUMN_LABEL_MAP = {
   inventory_total_qty: "总库存",
 };
 
-function mapRowToChinese(row) {
-  const result = {};
-  for (const [key, value] of Object.entries(row)) {
-    result[COLUMN_LABEL_MAP[key] || key] = value;
-  }
-  return result;
-}
-
-function mapColumnsToChinese(columns) {
-  return columns.map((col) => ({
-    ...col,
-    name: COLUMN_LABEL_MAP[col.name] || col.name,
-  }));
-}
-
 const DATASET_DAILY_SALES_COLS = [
   "sales_date", "style", "sku", "major_category", "category", "product_name", "tag_price", "season",
   "sales_women_qty", "sales_outdoor_qty", "sales_trend_qty", "sales_casual_qty",
@@ -327,9 +312,13 @@ function buildSchemaPromptText(schema) {
     .join("\n\n");
 }
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 async function queryPresetDataset(key, dateFrom, dateTo) {
   const dataset = PRESET_DATASETS[key];
   if (!dataset) throw new Error(`未知数据集: ${key}`);
+  if (dateFrom && !DATE_RE.test(dateFrom)) throw new Error("日期格式错误，需 YYYY-MM-DD");
+  if (dateTo && !DATE_RE.test(dateTo)) throw new Error("日期格式错误，需 YYYY-MM-DD");
 
   let sql;
   if (key === "daily_sales") {
@@ -378,8 +367,14 @@ function getTemplatesByAccount(accountId) {
   return readTemplates().filter((t) => t.account_id === accountId);
 }
 
+const MAX_TEMPLATES_PER_ACCOUNT = 50;
+
 function saveTemplate(accountId, { name, dataset_key, pivotState }) {
   const templates = readTemplates();
+  const accountCount = templates.filter((t) => t.account_id === accountId).length;
+  if (accountCount >= MAX_TEMPLATES_PER_ACCOUNT) {
+    throw new Error(`每个账号最多保存 ${MAX_TEMPLATES_PER_ACCOUNT} 个模板`);
+  }
   const id = `tpl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const tpl = {
     id,
