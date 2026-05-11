@@ -37,6 +37,7 @@ const WEB_INDEX_PATH = path.join(WEB_DIST_DIR, "index.html");
 const AUTH_CONFIG_DEFAULT_PATH = path.join(BASE_DIR, "config", "auth.json");
 const AUTH_CONFIG_LOCAL_PATH = path.join(BASE_DIR, "config", "auth.local.json");
 const AUTH_CONFIG_BACKUP_PATH = path.join(BASE_DIR, "runtime", "auth_config_backup.json");
+const SESSION_FILE_PATH = path.join(BASE_DIR, "runtime", "sessions.json");
 const ARRIVAL_BASE = appConfig.arrivalServiceUrl;
 const NOTES_BASE = appConfig.notesServiceUrl;
 const ARRIVAL_PROJECT_DIR = appConfig.arrivalProjectDir;
@@ -87,6 +88,29 @@ function writeJsonAtomic(filePath, data) {
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
   fs.renameSync(tmpPath, filePath);
+}
+
+function persistSessions() {
+  const entries = [];
+  for (const [sid, s] of SESSION_STORE.entries()) {
+    entries.push({ sid, account_id: s.account_id, created_at: s.created_at, expires_at: s.expires_at });
+  }
+  try {
+    fs.mkdirSync(path.dirname(SESSION_FILE_PATH), { recursive: true });
+    writeJsonAtomic(SESSION_FILE_PATH, entries);
+  } catch (_) { /* best-effort */ }
+}
+
+function loadPersistedSessions() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SESSION_FILE_PATH, "utf8"));
+    const now = Date.now();
+    for (const s of raw) {
+      if (s && s.sid && now < Number(s.expires_at || 0)) {
+        SESSION_STORE.set(s.sid, { sid: s.sid, account_id: s.account_id, created_at: s.created_at, expires_at: s.expires_at });
+      }
+    }
+  } catch (_) { /* file missing or corrupt — start fresh */ }
 }
 
 function escapeHtml(text) {
@@ -712,6 +736,7 @@ function createSession(account, options = {}) {
     expires_at: expiresAt,
   };
   SESSION_STORE.set(sid, session);
+  persistSessions();
   return getAuthAccountById(session.account_id)
     ? {
         ...session,
@@ -1573,6 +1598,7 @@ app.get("/logout", (req, res) => {
   const sid = parseCookies(req.headers.cookie)[getAuthStore().cookie_name];
   if (sid) {
     SESSION_STORE.delete(sid);
+    persistSessions();
   }
   clearSessionCookie(res);
   res.redirect("/login");
@@ -1595,6 +1621,7 @@ app.post("/api/auth/logout", (req, res) => {
   const sid = parseCookies(req.headers.cookie)[getAuthStore().cookie_name];
   if (sid) {
     SESSION_STORE.delete(sid);
+    persistSessions();
   }
   clearSessionCookie(res);
   res.json({ ok: true });
@@ -1635,10 +1662,10 @@ app.post("/api/auth/me/password", express.json({ limit: "256kb" }), (req, res) =
     return res.status(400).json({ ok: false, message });
   }
 
-  // 改密成功 → 当前会话失效（清服务端 store + 清 cookie），前端跳登录页
   const sid = parseCookies(req.headers.cookie)[getAuthStore().cookie_name];
   if (sid) {
     SESSION_STORE.delete(sid);
+    persistSessions();
   }
   clearSessionCookie(res);
 
@@ -2784,6 +2811,7 @@ app.use((err, _req, res, _next) => {
 });
 
 function startServer() {
+  loadPersistedSessions();
   return app.listen(port, host, () => {
     const ips = getLanIps();
     const lanHint = ips.length ? ips.map((ip) => `http://${ip}:${port}`).join(" | ") : "N/A";

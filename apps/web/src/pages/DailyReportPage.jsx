@@ -145,16 +145,30 @@ function buildDailyColumns(meta) {
     sections.push({ title: currentTitle, children: currentChildren, startIndex: currentStartIndex });
   }
 
-  return sections.flatMap((section, index) => {
+  const splitSections = [];
+  for (const section of sections) {
+    const fixedChildren = section.children.filter((_, i) => section.startIndex + i <= LAST_FIXED_LEFT_COLUMN_INDEX);
+    const scrollChildren = section.children.slice(fixedChildren.length);
+    if (fixedChildren.length && scrollChildren.length) {
+      splitSections.push({ ...section, children: fixedChildren });
+      splitSections.push({ ...section, children: scrollChildren, startIndex: section.startIndex + fixedChildren.length });
+    } else {
+      splitSections.push(section);
+    }
+  }
+
+  return splitSections.flatMap((section, index) => {
     if (!section.title) {
       return section.children;
     }
+    const hasFixed = section.startIndex <= LAST_FIXED_LEFT_COLUMN_INDEX;
     const surfaceClassName = resolveDailySurfaceClass(section.startIndex);
     return [
       {
         key: `group_${index}`,
         title: section.title,
         className: surfaceClassName,
+        fixed: hasFixed ? "left" : undefined,
         onHeaderCell: () => ({
           className: surfaceClassName,
         }),
