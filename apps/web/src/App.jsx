@@ -7,6 +7,7 @@ import {
   ShopOutlined,
   TableOutlined,
   TeamOutlined,
+  ToolOutlined,
 } from "@ant-design/icons";
 import { Alert, Button, Input, Layout, Menu, Modal, Space, Spin, Tag, Typography, message } from "antd";
 import { useEffect, useState } from "react";
@@ -22,6 +23,7 @@ import DailyReportPage from "./pages/DailyReportPage";
 import DashboardPage from "./pages/DashboardPage";
 import NoAccessPage from "./pages/NoAccessPage";
 import PortalPage from "./pages/PortalPage";
+import ToolsPage from "./pages/ToolsPage";
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
@@ -33,6 +35,7 @@ const MODULE_ICON_MAP = {
   dashboard: <BarChartOutlined />,
   channel_dashboard: <ShopOutlined />,
   analysis: <FileTextOutlined />,
+  tools: <ToolOutlined />,
 };
 
 function LoadingScreen() {
@@ -238,6 +241,14 @@ function AppShell() {
             element={
               <GuardedElement permission="analysis">
                 <AnalysisPage />
+              </GuardedElement>
+            }
+          />
+          <Route
+            path="/tools"
+            element={
+              <GuardedElement permission="tools">
+                <ToolsPage />
               </GuardedElement>
             }
           />

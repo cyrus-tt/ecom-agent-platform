@@ -44,6 +44,13 @@ export const APP_MODULES = [
     menuKey: "/analysis",
     description: "AI 经营分析与历史报告",
   },
+  {
+    key: "tools",
+    label: "小工具",
+    path: "/tools",
+    menuKey: "/tools",
+    description: "本地 Excel 小工具：移仓、洗码、调拨模板、断码预警、缺货处理",
+  },
 ];
 
 export function hasModulePermission(auth, moduleKey) {

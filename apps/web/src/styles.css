@@ -142,6 +142,54 @@ body {
   color: var(--text-1);
 }
 
+.tools-page-title .ant-card-body {
+  padding: 18px 20px;
+}
+
+.tools-page-title h3 {
+  margin: 0 0 6px;
+}
+
+.tools-status-card {
+  min-height: 164px;
+}
+
+.tools-upload .ant-upload-drag {
+  min-height: 144px;
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.tools-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 0 12px;
+}
+
+.tools-form-grid .ant-form-item {
+  margin-bottom: 12px;
+}
+
+.tools-actions {
+  margin-top: 4px;
+}
+
+.tools-action-col {
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 1px;
+}
+
+@media (max-width: 900px) {
+  .tools-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tools-action-col {
+    margin-top: 12px;
+  }
+}
+
 .daily-meta-strip {
   display: flex;
   flex-wrap: wrap;

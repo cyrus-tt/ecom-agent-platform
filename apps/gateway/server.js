@@ -14,6 +14,7 @@ const agentSkills = require("./services/agentSkills");
 const analysisContextProvider = require("./services/analysisContextProvider");
 const appConfig = require("./services/appConfig");
 const runtimeSecrets = require("./services/runtimeSecrets");
+const toolsModule = require("./services/tools");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -55,6 +56,7 @@ const AUTH_PERMISSION_MODULES = [
   { key: "dashboard", label: "可视化", route: "/dashboard", description: "综合数据可视化看板" },
   { key: "channel_dashboard", label: "渠道", route: "/channel-dashboard", description: "渠道店铺看板" },
   { key: "analysis", label: "分析", route: "/analysis", description: "AI 经营分析与历史报告" },
+  ...(toolsModule.isEnabled() ? [toolsModule.PERMISSION_MODULE] : []),
 ];
 
 const AUTH_PERMISSION_KEYS = AUTH_PERMISSION_MODULES.map((item) => item.key);

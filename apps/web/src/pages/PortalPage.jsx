@@ -7,6 +7,7 @@ import {
   ShopOutlined,
   TableOutlined,
   InboxOutlined,
+  ToolOutlined,
 } from "@ant-design/icons";
 import { Alert, Button, Card, Col, Descriptions, Row, Space, Tag, Typography, message } from "antd";
 import { useEffect, useMemo, useState } from "react";
@@ -46,6 +47,12 @@ const ENTRY_META = {
     path: "/channel-dashboard",
     icon: <ShopOutlined />,
     description: "查看各渠道中类销售 Top 与代表货号明细。",
+  },
+  tools: {
+    title: "小工具",
+    path: "/tools",
+    icon: <ToolOutlined />,
+    description: "本地处理移仓、洗码、调拨模板、断码预警和缺货处理。",
   },
 };
 
