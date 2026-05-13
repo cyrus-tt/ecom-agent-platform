@@ -58,6 +58,13 @@ export const APP_MODULES = [
     menuKey: "/dispatch",
     description: "调拨 Agent:清洗需求、计算调拨方案、生成导入模板",
   },
+  {
+    key: "tools",
+    label: "小工具",
+    path: "/tools",
+    menuKey: "/tools",
+    description: "本地 Excel 小工具：移仓、洗码、调拨模板、断码预警、缺货处理",
+  },
 ];
 
 export function hasModulePermission(auth, moduleKey) {

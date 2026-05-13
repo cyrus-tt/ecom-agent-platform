@@ -16,6 +16,7 @@ const appConfig = require("./services/appConfig");
 const runtimeSecrets = require("./services/runtimeSecrets");
 const biQueryService = require("./services/biQueryService");
 const dispatchModule = require("./services/dispatch");
+const toolsModule = require("./services/tools");
 const passwordPolicy = require("./lib/passwordPolicy");
 const { Semaphore, limitConcurrency } = require("./lib/concurrencyLimit");
 
@@ -66,6 +67,7 @@ const AUTH_PERMISSION_MODULES = [
   { key: "analysis", label: "分析", route: "/analysis", description: "AI 经营分析与历史报告" },
   { key: "bi", label: "ChatBI", route: "/bi", description: "AI 生成 SQL + 拖拽透视表" },
   ...(dispatchModule.isEnabled() ? [dispatchModule.PERMISSION_MODULE] : []),
+  ...(toolsModule.isEnabled() ? [toolsModule.PERMISSION_MODULE] : []),
 ];
 
 const AUTH_PERMISSION_KEYS = AUTH_PERMISSION_MODULES.map((item) => item.key);

@@ -9,6 +9,7 @@ import {
   SwapOutlined,
   TableOutlined,
   TeamOutlined,
+  ToolOutlined,
 } from "@ant-design/icons";
 import { Alert, Button, Input, Layout, Menu, Modal, Space, Spin, Tag, Typography, message } from "antd";
 import { useEffect, useState } from "react";
@@ -27,6 +28,7 @@ import DispatchPage from "./pages/DispatchPage";
 import BiPage from "./pages/BiPage";
 import NoAccessPage from "./pages/NoAccessPage";
 import PortalPage from "./pages/PortalPage";
+import ToolsPage from "./pages/ToolsPage";
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
@@ -40,12 +42,16 @@ const MODULE_ICON_MAP = {
   analysis: <FileTextOutlined />,
   bi: <FundProjectionScreenOutlined />,
   dispatch: <SwapOutlined />,
+  tools: <ToolOutlined />,
 };
 
 function LoadingScreen() {
   return (
     <div className="settings-loading">
-      <Spin tip="正在加载账号信息..." />
+      <Space direction="vertical" align="center" size={10}>
+        <Spin />
+        <Text type="secondary">正在加载账号信息...</Text>
+      </Space>
     </div>
   );
 }
@@ -266,6 +272,14 @@ function AppShell() {
             element={
               <GuardedElement permission="dispatch">
                 <DispatchPage />
+              </GuardedElement>
+            }
+          />
+          <Route
+            path="/tools"
+            element={
+              <GuardedElement permission="tools">
+                <ToolsPage />
               </GuardedElement>
             }
           />
