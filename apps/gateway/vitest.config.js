@@ -9,7 +9,7 @@ const path = require("path");
  */
 module.exports = {
   test: {
-    include: ["tests/**/*.test.js"],
+    include: ["tests/**/*.test.js", "lib/**/__tests__/*.test.js"],
     environment: "node",
     globals: false,
     testTimeout: 10000,

@@ -24,19 +24,20 @@ const {
   updatePasswordBodySchema,
   deepseekKeyBodySchema,
 } = require("../schemas/admin");
+const { requireAdmin } = require("../middleware/requireAdmin");
+const { getAuthStore } = require("../lib/auth/store");
+const { AUTH_PERMISSION_MODULES } = require("../lib/auth/permissions");
+const {
+  sanitizeAccountForClient,
+  createManagedAccount,
+  updateManagedAccountPermissions,
+  updateManagedAccountPassword,
+} = require("../lib/auth/accounts");
 
 function register(app, ctx) {
   const {
     express,
-    requireAdmin,
     runtimeSecrets,
-    // account helpers
-    getAuthStore,
-    sanitizeAccountForClient,
-    createManagedAccount,
-    updateManagedAccountPermissions,
-    updateManagedAccountPassword,
-    AUTH_PERMISSION_MODULES,
     // ops helpers
     getArrivalAutoStartState,
     getArrivalServiceStatus,

@@ -14,8 +14,11 @@
  * is true (see dispatch glue in server.js bootstrap).
  */
 
+const { requirePermission } = require("../middleware/requirePermission");
+const { requireAdmin } = require("../middleware/requireAdmin");
+
 function register(app, ctx) {
-  const { requirePermission, requireAdmin, sendReactApp } = ctx;
+  const { sendReactApp } = ctx;
 
   app.get(["/no-access", "/no-access/"], (_req, res) => {
     sendReactApp(res);

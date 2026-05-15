@@ -13,14 +13,14 @@
  * Notes service routes at /notes-api/* forward to the Python `notes` service.
  */
 
+const { requirePermission } = require("../middleware/requirePermission");
+const { getAuthStore, isPrimaryAdminAccount } = require("../lib/auth/store");
+
 function register(app, ctx) {
   const {
     express,
-    requirePermission,
     proxyArrivalRequest,
     forwardNotesRequest,
-    getAuthStore,
-    isPrimaryAdminAccount,
   } = ctx;
 
   // ── user directory for note authoring ─────────────────────────────

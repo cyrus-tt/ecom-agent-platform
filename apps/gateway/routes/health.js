@@ -13,6 +13,8 @@
  * top-level side effects and amenable to unit testing.
  */
 
+const { getAuthStore } = require("../lib/auth/store");
+
 function register(app, ctx) {
   const {
     host,
@@ -21,7 +23,6 @@ function register(app, ctx) {
     getReportDbStatus,
     getArrivalServiceStatus,
     getNotesServiceStatus,
-    getAuthStore,
     getLanIps,
   } = ctx;
 

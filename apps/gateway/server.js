@@ -18,7 +18,11 @@ const toolsModule = require("./services/tools");
 const biQueryService = require("./services/biQueryService");
 const dispatchModule = require("./services/dispatch");
 const { childLogger } = require("./lib/logger");
-const passwordHasher = require("./lib/passwordHasher");
+const auth = require("./lib/auth");
+const { sessionEnrichment } = require("./middleware/sessionEnrichment");
+const { requirePermission, requireAnyPermission } = require("./middleware/requirePermission");
+const { requireAdmin } = require("./middleware/requireAdmin");
+const { requireAgentContextAccess } = require("./middleware/requireAgentContextAccess");
 const log = childLogger("server");
 
 const app = express();
@@ -31,13 +35,6 @@ const PUBLIC_DIR = path.join(BASE_DIR, "public");
 const PROJECT_ROOT = path.resolve(BASE_DIR, "..", "..");
 const WEB_DIST_DIR = process.env.WEB_DIST_DIR || path.join(PROJECT_ROOT, "apps", "web", "dist");
 const WEB_INDEX_PATH = path.join(WEB_DIST_DIR, "index.html");
-const AUTH_CONFIG_DEFAULT_PATH = process.env.AUTH_CONFIG_PATH
-  ? path.resolve(process.env.AUTH_CONFIG_PATH)
-  : path.join(BASE_DIR, "config", "auth.json");
-const AUTH_CONFIG_LOCAL_PATH = process.env.AUTH_CONFIG_LOCAL_PATH
-  ? path.resolve(process.env.AUTH_CONFIG_LOCAL_PATH)
-  : path.join(BASE_DIR, "config", "auth.local.json");
-const AUTH_CONFIG_BACKUP_PATH = path.join(BASE_DIR, "runtime", "auth_config_backup.json");
 const ARRIVAL_BASE = appConfig.arrivalServiceUrl;
 const NOTES_BASE = appConfig.notesServiceUrl;
 const ARRIVAL_PROJECT_DIR = appConfig.arrivalProjectDir;
@@ -45,51 +42,13 @@ const PG_PIPELINE_SCRIPT = path.join(PROJECT_ROOT, "ops", "windows", "run_pg_pip
 const ARRIVAL_URL = new URL(ARRIVAL_BASE);
 const ARRIVAL_START_TIMEOUT_MS = Math.max(3000, Number(process.env.ARRIVAL_START_TIMEOUT_MS || 20000));
 const ARRIVAL_PROBE_TIMEOUT_MS = Math.max(1000, Number(process.env.ARRIVAL_PROBE_TIMEOUT_MS || 2500));
-const AUTH_COOKIE_SECURE = String(process.env.AUTH_COOKIE_SECURE || (process.env.NODE_ENV === "production" ? "true" : "false"))
-  .trim()
-  .toLowerCase() === "true";
 
-const SESSION_STORE = new Map();
 const JOB_STORE = new Map();
 const RUNNING_JOB_BY_TYPE = new Map();
 const JOB_LOG_LIMIT = 300;
 let ARRIVAL_SERVICE_PROCESS = null;
 let ARRIVAL_SERVICE_START_PROMISE = null;
 let ARRIVAL_SERVICE_LAST_ERROR = "";
-let AUTH_STORE = null;
-
-const AUTH_PERMISSION_MODULES = [
-  { key: "portal", label: "门户", route: "/", description: "登录后的首页与系统健康概览" },
-  { key: "report_daily", label: "日报", route: "/report-daily", description: "日报主表与导出" },
-  { key: "arrival", label: "新品", route: "/arrival", description: "到货、新品看板与跟进备注" },
-  { key: "dashboard", label: "可视化", route: "/dashboard", description: "综合数据可视化看板" },
-  { key: "channel_dashboard", label: "渠道", route: "/channel-dashboard", description: "渠道店铺看板" },
-  { key: "analysis", label: "分析", route: "/analysis", description: "AI 经营分析与历史报告" },
-  { key: "bi", label: "ChatBI", route: "/bi", description: "AI 生成 SQL + 拖拽透视表" },
-  ...(dispatchModule.isEnabled() ? [dispatchModule.PERMISSION_MODULE] : []),
-  ...(toolsModule.isEnabled() ? [toolsModule.PERMISSION_MODULE] : []),
-];
-
-const AUTH_PERMISSION_KEYS = AUTH_PERMISSION_MODULES.map((item) => item.key);
-const AUTH_PERMISSION_SET = new Set(AUTH_PERMISSION_KEYS);
-
-function sha256(text) {
-  return crypto.createHash("sha256").update(String(text || ""), "utf8").digest("hex");
-}
-
-function safeJsonRead(filePath, fallback) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch (_err) {
-    return fallback;
-  }
-}
-
-function writeJsonAtomic(filePath, data) {
-  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
-  fs.renameSync(tmpPath, filePath);
-}
 
 function escapeHtml(text) {
   return String(text || "")
@@ -98,424 +57,6 @@ function escapeHtml(text) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
-}
-
-function normalizePermissionKeys(rawPermissions, fallbackPermissions = AUTH_PERMISSION_KEYS) {
-  if (!Array.isArray(rawPermissions)) {
-    return [...fallbackPermissions];
-  }
-  const next = [];
-  rawPermissions.forEach((item) => {
-    const key = String(item || "").trim();
-    if (!AUTH_PERMISSION_SET.has(key) || next.includes(key)) {
-      return;
-    }
-    next.push(key);
-  });
-  return next;
-}
-
-function buildAccountId(raw, fallbackUsername, index) {
-  const explicitId = String(raw?.id || raw?.account_id || "").trim();
-  if (explicitId) {
-    return explicitId;
-  }
-  const seed = [
-    String(index),
-    String(raw?.name || raw?.display_name || ""),
-    String(raw?.username || fallbackUsername || ""),
-    String(raw?.password_hash || ""),
-  ].join("|");
-  return `acct_${sha256(seed).slice(0, 16)}`;
-}
-
-function normalizeAuthAccount(raw, fallbackUsername, fallbackPasswordHash, index, fallbackPermissions = AUTH_PERMISSION_KEYS) {
-  if (!raw || typeof raw !== "object") {
-    return null;
-  }
-  const id = buildAccountId(raw, fallbackUsername, index);
-  const username = String(raw.username || fallbackUsername || "").trim();
-  const passwordHash = String(raw.password_hash || fallbackPasswordHash || "").trim().toLowerCase();
-  if (!username || !/^[0-9a-f]{64}$/i.test(passwordHash)) {
-    return null;
-  }
-  const passwordBcrypt = String(raw.password_bcrypt || "").trim();
-  return {
-    id,
-    name: String(raw.name || raw.display_name || username).trim() || username,
-    username,
-    password_hash: passwordHash,
-    password_bcrypt: passwordBcrypt,
-    is_admin: raw.is_admin !== false,
-    permissions: normalizePermissionKeys(raw.permissions, fallbackPermissions),
-  };
-}
-
-function loadAuthConfig() {
-  const defaults = {
-    username: "anta",
-    password_hash: sha256("123"),
-    session_ttl_seconds: 24 * 3600,
-    cookie_name: "anta_sid",
-  };
-  const defaultConfig = safeJsonRead(AUTH_CONFIG_DEFAULT_PATH, {});
-  const localConfig = safeJsonRead(AUTH_CONFIG_LOCAL_PATH, {});
-  const raw = {
-    ...defaultConfig,
-    ...localConfig,
-    accounts: Array.isArray(localConfig.accounts)
-      ? localConfig.accounts
-      : Array.isArray(defaultConfig.accounts)
-        ? defaultConfig.accounts
-        : [],
-  };
-  const legacyUsername = String(raw.username || defaults.username).trim() || defaults.username;
-  const legacyPasswordHash = String(raw.password_hash || defaults.password_hash).trim().toLowerCase() || defaults.password_hash;
-  const accounts = [];
-  const rawAccounts = Array.isArray(raw.accounts) ? raw.accounts : [];
-  rawAccounts.forEach((item) => {
-    const normalized = normalizeAuthAccount(item, legacyUsername, legacyPasswordHash);
-    if (normalized) {
-      accounts.push(normalized);
-    }
-  });
-  const legacyAccount = normalizeAuthAccount(
-    {
-      name: raw.name || raw.display_name || "默认账号",
-      username: legacyUsername,
-      password_hash: legacyPasswordHash,
-      is_admin: raw.is_admin !== false,
-    },
-    defaults.username,
-    defaults.password_hash
-  );
-  if (legacyAccount && !accounts.some((item) => item.username === legacyAccount.username && item.password_hash === legacyAccount.password_hash)) {
-    accounts.unshift(legacyAccount);
-  }
-  return {
-    username: legacyUsername,
-    password_hash: legacyPasswordHash,
-    session_ttl_seconds: Math.max(300, Number(raw.session_ttl_seconds || defaults.session_ttl_seconds)),
-    cookie_name: String(raw.cookie_name || defaults.cookie_name),
-    accounts,
-  };
-}
-
-const AUTH_CONFIG = loadAuthConfig();
-
-function buildAuthStore(raw) {
-  const defaults = {
-    username: "anta",
-    password_hash: sha256("123"),
-    session_ttl_seconds: 24 * 3600,
-    cookie_name: "anta_sid",
-  };
-  const legacyUsername = String(raw.username || defaults.username).trim() || defaults.username;
-  const legacyPasswordHash = String(raw.password_hash || defaults.password_hash).trim().toLowerCase() || defaults.password_hash;
-  const accounts = [];
-  const rawAccounts = Array.isArray(raw.accounts) ? raw.accounts : [];
-  rawAccounts.forEach((item, index) => {
-    const normalized = normalizeAuthAccount(item, legacyUsername, legacyPasswordHash, index, AUTH_PERMISSION_KEYS);
-    if (normalized) {
-      accounts.push(normalized);
-    }
-  });
-  const legacyAccount = normalizeAuthAccount(
-    {
-      name: raw.name || raw.display_name || "Default Admin",
-      username: legacyUsername,
-      password_hash: legacyPasswordHash,
-      is_admin: raw.is_admin !== false,
-      permissions: AUTH_PERMISSION_KEYS,
-    },
-    defaults.username,
-    defaults.password_hash,
-    -1,
-    AUTH_PERMISSION_KEYS
-  );
-  if (
-    legacyAccount &&
-    !accounts.some(
-      (item) =>
-        item.id === legacyAccount.id ||
-        (item.username === legacyAccount.username && item.password_hash === legacyAccount.password_hash)
-    )
-  ) {
-    accounts.unshift(legacyAccount);
-  }
-
-  let primaryAdminId = String(raw.primary_admin_id || "").trim();
-  if (!primaryAdminId || !accounts.some((item) => item.id === primaryAdminId)) {
-    primaryAdminId = accounts.find((item) => item.is_admin === true)?.id || accounts[0]?.id || "";
-  }
-
-  const normalizedAccounts = accounts.map((account) => {
-    const isPrimaryAdmin = account.id === primaryAdminId;
-    return {
-      ...account,
-      is_admin: isPrimaryAdmin,
-      permissions: isPrimaryAdmin ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account.permissions, AUTH_PERMISSION_KEYS),
-    };
-  });
-  const primaryAdminAccount = normalizedAccounts.find((item) => item.id === primaryAdminId) || normalizedAccounts[0] || null;
-  return {
-    username: legacyUsername,
-    password_hash: primaryAdminAccount?.password_hash || legacyPasswordHash,
-    session_ttl_seconds: Math.max(300, Number(raw.session_ttl_seconds || defaults.session_ttl_seconds)),
-    cookie_name: String(raw.cookie_name || defaults.cookie_name),
-    primary_admin_id: primaryAdminId,
-    accounts: normalizedAccounts,
-  };
-}
-
-function loadManagedAuthStore() {
-  const defaultConfig = safeJsonRead(AUTH_CONFIG_DEFAULT_PATH, {});
-  const localConfig = safeJsonRead(AUTH_CONFIG_LOCAL_PATH, {});
-  return buildAuthStore({
-    ...defaultConfig,
-    ...localConfig,
-    accounts: Array.isArray(localConfig.accounts)
-      ? localConfig.accounts
-      : Array.isArray(defaultConfig.accounts)
-        ? defaultConfig.accounts
-        : [],
-  });
-}
-
-function getAuthStore() {
-  if (!AUTH_STORE) {
-    AUTH_STORE = loadManagedAuthStore();
-  }
-  return AUTH_STORE;
-}
-
-function replaceAuthStore(nextStore) {
-  AUTH_STORE = nextStore;
-  return AUTH_STORE;
-}
-
-function reloadAuthStore() {
-  return replaceAuthStore(loadManagedAuthStore());
-}
-
-function resolvePreferredRouteForPermissions(permissions) {
-  const permissionList = Array.isArray(permissions) ? permissions : [];
-  for (const item of AUTH_PERMISSION_MODULES) {
-    if (permissionList.includes(item.key)) {
-      return item.route;
-    }
-  }
-  return "/no-access";
-}
-
-function resolvePreferredRouteForAccount(account) {
-  if (!account) {
-    return "/no-access";
-  }
-  if (account.is_admin === true) {
-    return "/";
-  }
-  return resolvePreferredRouteForPermissions(account.permissions);
-}
-
-function accountHasPermission(account, permissionKey) {
-  if (!account) {
-    return false;
-  }
-  if (account.is_admin === true) {
-    return true;
-  }
-  return Array.isArray(account.permissions) && account.permissions.includes(permissionKey);
-}
-
-function accountHasAnyPermission(account, permissionKeys) {
-  return (Array.isArray(permissionKeys) ? permissionKeys : []).some((item) => accountHasPermission(account, item));
-}
-
-function isRouteAllowedForAccount(account, pathname) {
-  const routePath = String(pathname || "").trim() || "/";
-  if (routePath === "/no-access") {
-    return true;
-  }
-  if (routePath === "/") {
-    return accountHasPermission(account, "portal");
-  }
-  if (routePath === "/report" || routePath.startsWith("/report-daily")) {
-    return accountHasPermission(account, "report_daily");
-  }
-  if (routePath.startsWith("/arrival")) {
-    return accountHasPermission(account, "arrival");
-  }
-  if (routePath.startsWith("/dashboard")) {
-    return accountHasPermission(account, "dashboard");
-  }
-  if (routePath.startsWith("/channel-dashboard")) {
-    return accountHasPermission(account, "channel_dashboard");
-  }
-  if (routePath.startsWith("/analysis")) {
-    return accountHasPermission(account, "analysis");
-  }
-  if (routePath.startsWith("/admin/accounts")) {
-    return account?.is_admin === true;
-  }
-  return true;
-}
-
-function exportAuthConfig(authStore = getAuthStore()) {
-  const primaryAdminAccount = authStore.accounts.find((item) => item.id === authStore.primary_admin_id) || authStore.accounts[0] || null;
-  return {
-    name: primaryAdminAccount?.name || "Default Admin",
-    username: authStore.username,
-    password_hash: primaryAdminAccount?.password_hash || authStore.password_hash,
-    session_ttl_seconds: authStore.session_ttl_seconds,
-    cookie_name: authStore.cookie_name,
-    primary_admin_id: authStore.primary_admin_id,
-    accounts: authStore.accounts.map((account) => ({
-      id: account.id,
-      name: account.name,
-      username: account.username,
-      password_hash: account.password_hash,
-      password_bcrypt: account.password_bcrypt || "",
-      is_admin: account.id === authStore.primary_admin_id,
-      permissions: account.id === authStore.primary_admin_id ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account.permissions, []),
-    })),
-  };
-}
-
-function ensureAuthConfigBackup() {
-  if (fs.existsSync(AUTH_CONFIG_BACKUP_PATH)) {
-    return;
-  }
-  fs.mkdirSync(path.dirname(AUTH_CONFIG_BACKUP_PATH), { recursive: true });
-  writeJsonAtomic(AUTH_CONFIG_BACKUP_PATH, exportAuthConfig(getAuthStore()));
-}
-
-function persistAuthStore(nextStore) {
-  ensureAuthConfigBackup();
-  fs.mkdirSync(path.dirname(AUTH_CONFIG_LOCAL_PATH), { recursive: true });
-  writeJsonAtomic(AUTH_CONFIG_LOCAL_PATH, exportAuthConfig(nextStore));
-  return replaceAuthStore(buildAuthStore(exportAuthConfig(nextStore)));
-}
-
-function getAuthAccountById(accountId) {
-  const lookupId = String(accountId || "").trim();
-  if (!lookupId) {
-    return null;
-  }
-  return getAuthStore().accounts.find((item) => item.id === lookupId) || null;
-}
-
-function isPrimaryAdminAccount(accountId) {
-  return String(accountId || "").trim() !== "" && getAuthStore().primary_admin_id === String(accountId);
-}
-
-function sanitizeAccountForClient(account) {
-  if (!account) {
-    return null;
-  }
-  return {
-    id: account.id,
-    name: account.name,
-    username: account.username,
-    is_admin: account.is_admin === true,
-    is_primary_admin: isPrimaryAdminAccount(account.id),
-    permissions: account.is_admin === true ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account.permissions, []),
-    preferred_route: resolvePreferredRouteForAccount(account),
-  };
-}
-
-function cloneAccountForMutation(account) {
-  return {
-    id: account.id,
-    name: account.name,
-    username: account.username,
-    password_hash: account.password_hash,
-    password_bcrypt: account.password_bcrypt || "",
-    is_admin: account.is_admin === true,
-    permissions: normalizePermissionKeys(account.permissions, []),
-  };
-}
-
-function validateAccountName(name, existingAccounts = [], currentId = "") {
-  const nextName = String(name || "").trim();
-  if (!nextName) {
-    throw new Error("name is required");
-  }
-  const normalized = nextName.toLowerCase();
-  const duplicated = existingAccounts.some(
-    (item) => item.id !== currentId && String(item.name || "").trim().toLowerCase() === normalized
-  );
-  if (duplicated) {
-    throw new Error("account name already exists");
-  }
-  return nextName;
-}
-
-function validateAccountPassword(password) {
-  const nextPassword = String(password || "");
-  if (!nextPassword) {
-    throw new Error("password is required");
-  }
-  if (nextPassword.length > 128) {
-    throw new Error("password is too long");
-  }
-  return nextPassword;
-}
-
-function updateAuthStore(mutator) {
-  const draft = exportAuthConfig(getAuthStore());
-  draft.accounts = draft.accounts.map((account) => cloneAccountForMutation(account));
-  mutator(draft);
-  return persistAuthStore(buildAuthStore(draft));
-}
-
-function createManagedAccount({ name, password, permissions }) {
-  const nextPassword = validateAccountPassword(password);
-  const bcryptHash = passwordHasher.isBcryptEnabled()
-    ? passwordHasher.hashForStorage(nextPassword)
-    : "";
-  const nextStore = updateAuthStore((draft) => {
-    const nextName = validateAccountName(name, draft.accounts);
-    draft.accounts.push({
-      id: `acct_${crypto.randomBytes(8).toString("hex")}`,
-      name: nextName,
-      username: draft.username,
-      password_hash: sha256(nextPassword),
-      password_bcrypt: bcryptHash,
-      is_admin: false,
-      permissions: normalizePermissionKeys(permissions, []),
-    });
-  });
-  return nextStore.accounts[nextStore.accounts.length - 1] || null;
-}
-
-function updateManagedAccountPermissions(accountId, permissions) {
-  updateAuthStore((draft) => {
-    const target = draft.accounts.find((item) => item.id === accountId);
-    if (!target) {
-      throw new Error("account not found");
-    }
-    if (draft.primary_admin_id === target.id) {
-      throw new Error("primary admin permissions are locked");
-    }
-    target.permissions = normalizePermissionKeys(permissions, []);
-  });
-  return getAuthAccountById(accountId);
-}
-
-function updateManagedAccountPassword(accountId, password) {
-  const nextPassword = validateAccountPassword(password);
-  updateAuthStore((draft) => {
-    const target = draft.accounts.find((item) => item.id === accountId);
-    if (!target) {
-      throw new Error("account not found");
-    }
-    target.password_hash = sha256(nextPassword);
-    target.password_bcrypt = passwordHasher.isBcryptEnabled()
-      ? passwordHasher.hashForStorage(nextPassword)
-      : "";
-  });
-  return getAuthAccountById(accountId);
 }
 
 function getLanIps() {
@@ -648,292 +189,12 @@ function sendReactApp(res) {
   return res.sendFile(WEB_INDEX_PATH);
 }
 
-function parseCookies(cookieHeader) {
-  const cookies = {};
-  String(cookieHeader || "")
-    .split(";")
-    .forEach((part) => {
-      const idx = part.indexOf("=");
-      if (idx <= 0) {
-        return;
-      }
-      try {
-        const key = decodeURIComponent(part.slice(0, idx).trim());
-        const value = decodeURIComponent(part.slice(idx + 1).trim());
-        if (key) {
-          cookies[key] = value;
-        }
-      } catch (_err) {
-        return;
-      }
-    });
-  return cookies;
-}
-
-function cleanupSessions() {
-  const now = Date.now();
-  for (const [sid, session] of SESSION_STORE.entries()) {
-    if (!session || now >= Number(session.expires_at || 0)) {
-      SESSION_STORE.delete(sid);
-    }
-  }
-}
-
-function createSession(account) {
-  cleanupSessions();
-  const sid = crypto.randomBytes(24).toString("hex");
-  const authStore = getAuthStore();
-  const expiresAt = Date.now() + authStore.session_ttl_seconds * 1000;
-  const session = {
-    sid,
-    account_id: String(account?.id || ""),
-    created_at: Date.now(),
-    expires_at: expiresAt,
-  };
-  SESSION_STORE.set(sid, session);
-  return getAuthAccountById(session.account_id)
-    ? {
-        ...session,
-        username: String(account?.username || ""),
-        name: String(account?.name || account?.username || ""),
-        is_admin: account?.is_admin === true,
-        permissions: account?.is_admin === true ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account?.permissions, []),
-        shared_username: authStore.username,
-        preferred_route: resolvePreferredRouteForAccount(account),
-      }
-    : null;
-}
-
-function verifyPasswordHash(password, expectedHex) {
-  // Legacy SHA256-only helper kept for any callers that still depend on it.
-  // Prefer passwordHasher.verify(password, account) for new code.
-  return passwordHasher.verify(password, { password_hash: expectedHex }).valid;
-}
-
-function findAccountByCredentials(username, password) {
-  const normalizedUsername = String(username || "").trim();
-  if (!normalizedUsername) {
-    return { account: null, needsUpgrade: false, method: null };
-  }
-  for (const account of getAuthStore().accounts || []) {
-    if (!account || account.username !== normalizedUsername) {
-      continue;
-    }
-    const result = passwordHasher.verify(password, account);
-    if (result.valid) {
-      return { account, needsUpgrade: result.needsUpgrade, method: result.method };
-    }
-  }
-  return { account: null, needsUpgrade: false, method: null };
-}
-
-function upgradeAccountToBcrypt(accountId, plaintextPassword) {
-  const store = getAuthStore();
-  const next = {
-    ...store,
-    accounts: store.accounts.map((entry) => {
-      if (entry.id !== accountId) return entry;
-      return {
-        ...entry,
-        password_bcrypt: passwordHasher.hashForStorage(plaintextPassword),
-      };
-    }),
-  };
-  try {
-    persistAuthStore(next);
-    log.info({ accountId }, "password auto-upgraded to bcrypt");
-  } catch (err) {
-    log.warn(
-      { accountId, err: err && err.message },
-      `bcrypt auto-upgrade persist failed: ${err && err.message}`
-    );
-  }
-}
-
-function getMatchedAccount(username, password) {
-  const { account, needsUpgrade } = findAccountByCredentials(username, password);
-  if (account && needsUpgrade) {
-    upgradeAccountToBcrypt(account.id, password);
-  }
-  return account;
-}
-
-function getSessionByRequest(req) {
-  cleanupSessions();
-  const cookies = parseCookies(req.headers.cookie);
-  const authStore = getAuthStore();
-  const sid = cookies[authStore.cookie_name];
-  if (!sid) {
-    return null;
-  }
-  const session = SESSION_STORE.get(sid);
-  if (!session || Date.now() >= Number(session.expires_at || 0)) {
-    SESSION_STORE.delete(sid);
-    return null;
-  }
-  const account = getAuthAccountById(session.account_id);
-  if (!account) {
-    SESSION_STORE.delete(sid);
-    return null;
-  }
-  return {
-    sid,
-    account_id: session.account_id,
-    username: String(account.username || ""),
-    name: String(account.name || account.username || ""),
-    is_admin: account.is_admin === true,
-    permissions: account.is_admin === true ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account.permissions, []),
-    shared_username: authStore.username,
-    preferred_route: resolvePreferredRouteForAccount(account),
-    created_at: Number(session.created_at || Date.now()),
-    expires_at: Number(session.expires_at || 0),
-  };
-}
-
-function setSessionCookie(res, sid) {
-  const authStore = getAuthStore();
-  res.cookie(authStore.cookie_name, sid, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: AUTH_COOKIE_SECURE,
-    path: "/",
-    maxAge: authStore.session_ttl_seconds * 1000,
-  });
-}
-
-function clearSessionCookie(res) {
-  res.clearCookie(getAuthStore().cookie_name, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: AUTH_COOKIE_SECURE,
-    path: "/",
-  });
-}
-
-function normalizeNext(raw) {
-  const value = String(raw || "").trim();
-  if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return "/";
-  }
-  return value;
-}
-
-function isPublicPath(pathname) {
-  return (
-    pathname === "/login" ||
-    pathname === "/api/auth/login" ||
-    pathname === "/api/agent/context" ||
-    pathname === "/healthz" ||
-    pathname === "/readyz" ||
-    pathname === "/favicon.ico" ||
-    pathname === "/login.css" ||
-    pathname === "/login.js" ||
-    pathname.startsWith("/dispatch/confirm/") ||
-    pathname === "/api/dispatch/public/preview" ||
-    pathname === "/api/dispatch/public/confirm"
-  );
-}
-
-function buildAuthMePayload(session) {
-  return {
-    ok: true,
-    account_id: session.account_id,
-    username: session.username,
-    name: session.name,
-    is_admin: session.is_admin === true,
-    permissions: session.is_admin === true ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(session.permissions, []),
-    shared_username: session.shared_username || getAuthStore().username,
-    preferred_route: session.preferred_route || resolvePreferredRouteForPermissions(session.permissions),
-    expires_at: new Date(session.expires_at).toISOString(),
-  };
-}
-
-function isApiLikeRequest(req) {
-  return req.path.startsWith("/api/") || req.path.startsWith("/notes-api/");
-}
-
-function denyPermission(req, res, requiredPermission) {
-  const preferredRoute = normalizeNext(req.authSession?.preferred_route || "/no-access");
-  if (isApiLikeRequest(req)) {
-    return res.status(403).json({
-      ok: false,
-      message: "Forbidden",
-      required_permission: requiredPermission || "",
-      preferred_route: preferredRoute,
-    });
-  }
-  const currentPath = normalizeNext(req.originalUrl || req.path || "/");
-  if (preferredRoute === currentPath) {
-    return res.redirect("/no-access");
-  }
-  return res.redirect(preferredRoute);
-}
-
-function requirePermission(permissionKey) {
-  return (req, res, next) => {
-    if (accountHasPermission(req.authSession, permissionKey)) {
-      return next();
-    }
-    return denyPermission(req, res, permissionKey);
-  };
-}
-
-function requireAnyPermission(permissionKeys) {
-  return (req, res, next) => {
-    if (accountHasAnyPermission(req.authSession, permissionKeys)) {
-      return next();
-    }
-    return denyPermission(req, res, Array.isArray(permissionKeys) ? permissionKeys.join(",") : "");
-  };
-}
-
-function requireAdmin(req, res, next) {
-  if (req.authSession?.is_admin === true) {
-    return next();
-  }
-  return denyPermission(req, res, "admin");
-}
-
-function hasAgentReadToken(req) {
-  const configured = String(appConfig.agentRemoteReadToken || "").trim();
-  if (!configured) {
-    return false;
-  }
-  const authorization = String(req.headers.authorization || "").trim();
-  const bearerToken = authorization.toLowerCase().startsWith("bearer ")
-    ? authorization.slice(7).trim()
-    : "";
-  const headerToken = String(req.headers["x-agent-read-token"] || "").trim();
-  return bearerToken === configured || headerToken === configured;
-}
-
-function requireAgentContextAccess(req, res, next) {
-  if (accountHasPermission(req.authSession, "analysis")) {
-    return next();
-  }
-  if (hasAgentReadToken(req)) {
-    return next();
-  }
-  return res.status(401).json({
-    ok: false,
-    message: "Unauthorized",
-    login: "/login",
-  });
-}
-
-function resolvePostLoginRoute(account, rawNext) {
-  const preferredRoute = resolvePreferredRouteForAccount(account);
-  const nextUrl = normalizeNext(rawNext);
-  if (nextUrl === "/login" || nextUrl === "/logout") {
-    return preferredRoute;
-  }
-  return isRouteAllowedForAccount(account, nextUrl) ? nextUrl : preferredRoute;
-}
-
 function renderLoginPage(sharedUsername) {
   const template = fs.readFileSync(path.join(PUBLIC_DIR, "login.html"), "utf8");
   return template.replace(/__SHARED_USERNAME__/g, escapeHtml(sharedUsername));
 }
+
+// ── arrival/notes job + proxy plumbing (V4 will move to lib/jobs + lib/proxy) ──
 
 function appendJobLog(job, streamName, chunk) {
   const lines = String(chunk || "")
@@ -1412,7 +673,7 @@ async function proxyArrivalRequest(req, res, options = {}) {
 
 async function forwardNotesRequest(req, res) {
   try {
-    const canViewAllNotes = isPrimaryAdminAccount(req.authSession?.account_id);
+    const canViewAllNotes = auth.isPrimaryAdminAccount(req.authSession?.account_id);
     const currentNoteUser = String(req.authSession?.name || "").trim();
     if (!canViewAllNotes && !currentNoteUser) {
       return res.status(403).json({ ok: false, message: "Forbidden" });
@@ -1503,15 +764,9 @@ function probeJson(urlString, timeoutMs = 3000) {
   });
 }
 
-app.use((req, _res, next) => {
-  req.authSession = getSessionByRequest(req);
-  req.authAccountId = req.authSession ? req.authSession.account_id : "";
-  req.authUser = req.authSession ? req.authSession.username : "";
-  req.authName = req.authSession ? req.authSession.name : "";
-  req.authIsAdmin = !!(req.authSession && req.authSession.is_admin);
-  req.authPermissions = req.authSession ? req.authSession.permissions : [];
-  next();
-});
+// ── middleware pipeline ────────────────────────────────────────────────
+
+app.use(sessionEnrichment());
 
 // Sentry request handler must come BEFORE all other middleware/routes
 // so it can capture exceptions from anywhere downstream. No-op if
@@ -1532,25 +787,15 @@ const auditLogger = createAuditLogger({
 app.use(auditRequestMiddleware(auditLogger));
 
 // Expose Prometheus scrape endpoint (admin-gated via routes/metrics.js).
-require("./routes/metrics").register(app, { requireAdmin });
+require("./routes/metrics").register(app);
 
 require("./routes/auth-public").register(app, {
   express,
-  getAuthStore,
-  getMatchedAccount,
-  createSession,
-  setSessionCookie,
-  clearSessionCookie,
-  SESSION_STORE,
-  parseCookies,
-  buildAuthMePayload,
-  normalizeNext,
-  resolvePostLoginRoute,
   renderLoginPage,
 });
 
 app.use((req, res, next) => {
-  if (isPublicPath(req.path)) {
+  if (auth.isPublicPath(req.path)) {
     return next();
   }
   if (req.authUser) {
@@ -1562,24 +807,11 @@ app.use((req, res, next) => {
   return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl || "/")}`);
 });
 
-require("./routes/auth-session").register(app, {
-  getAuthStore,
-  clearSessionCookie,
-  SESSION_STORE,
-  parseCookies,
-  buildAuthMePayload,
-});
+require("./routes/auth-session").register(app);
 
 require("./routes/admin").register(app, {
   express,
-  requireAdmin,
   runtimeSecrets,
-  getAuthStore,
-  sanitizeAccountForClient,
-  createManagedAccount,
-  updateManagedAccountPermissions,
-  updateManagedAccountPassword,
-  AUTH_PERMISSION_MODULES,
   getArrivalAutoStartState,
   getArrivalServiceStatus,
   refreshArrivalViaUpstream,
@@ -1602,14 +834,11 @@ require("./routes/health").register(app, {
   getReportDbStatus,
   getArrivalServiceStatus,
   getNotesServiceStatus,
-  getAuthStore,
   getLanIps,
 });
 
 
 require("./routes/report").register(app, {
-  requirePermission,
-  requireAnyPermission,
   reportRepo,
   parsePositiveInt,
   stampNow,
@@ -1617,15 +846,12 @@ require("./routes/report").register(app, {
 });
 
 require("./routes/dashboard").register(app, {
-  requirePermission,
   reportRepo,
   parsePositiveInt,
 });
 
 require("./routes/agent").register(app, {
   express,
-  requirePermission,
-  requireAgentContextAccess,
   agentSkills,
   agentService,
   analysisContextProvider,
@@ -1637,11 +863,8 @@ require("./routes/agent").register(app, {
 
 require("./routes/arrival").register(app, {
   express,
-  requirePermission,
   proxyArrivalRequest,
   forwardNotesRequest,
-  getAuthStore,
-  isPrimaryAdminAccount,
 });
 
 app.get("/api/bi/datasets", requirePermission("bi"), (_req, res) => {
@@ -1767,14 +990,10 @@ app.post("/api/bi/ask", requirePermission("bi"), express.json({ limit: "64kb" })
 });
 
 require("./routes/spa").register(app, {
-  requirePermission,
-  requireAdmin,
   sendReactApp,
 });
 
-require("./routes/docs").register(app, {
-  requireAdmin,
-});
+require("./routes/docs").register(app);
 
 // ── dispatch agent (开关由 DISPATCH_AGENT_ENABLED 控制) ──
 if (dispatchModule.isEnabled()) {

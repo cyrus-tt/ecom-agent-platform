@@ -53,8 +53,9 @@ function loadSpec(source) {
   return cache[source];
 }
 
-function register(app, ctx) {
-  const { requireAdmin } = ctx;
+const { requireAdmin } = require("../middleware/requireAdmin");
+
+function register(app) {
 
   // Raw spec for admin download / external tools (Postman import etc.).
   app.get("/api/docs.yaml", requireAdmin, (req, res) => {

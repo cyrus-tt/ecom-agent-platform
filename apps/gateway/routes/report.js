@@ -11,11 +11,10 @@
  */
 
 const XLSX = require("xlsx");
+const { requirePermission, requireAnyPermission } = require("../middleware/requirePermission");
 
 function register(app, ctx) {
   const {
-    requirePermission,
-    requireAnyPermission,
     reportRepo,
     parsePositiveInt,
     stampNow,

@@ -10,15 +10,15 @@
  * enrichment middleware (still upstream of the guard).
  */
 
-function register(app, ctx) {
-  const {
-    getAuthStore,
-    clearSessionCookie,
-    SESSION_STORE,
-    parseCookies,
-    buildAuthMePayload,
-  } = ctx;
+const { getAuthStore } = require("../lib/auth/store");
+const {
+  parseCookies,
+  clearSessionCookie,
+  buildAuthMePayload,
+  SESSION_STORE,
+} = require("../lib/auth/session");
 
+function register(app) {
   app.post("/api/auth/logout", (req, res) => {
     const sid = parseCookies(req.headers.cookie)[getAuthStore().cookie_name];
     if (sid) {

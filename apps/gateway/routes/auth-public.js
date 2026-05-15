@@ -14,22 +14,27 @@
 
 const { validateBody } = require("../middleware/validateBody");
 const { loginBodySchema } = require("../schemas/auth");
+const {
+  getAuthStore,
+} = require("../lib/auth/store");
+const {
+  getMatchedAccount,
+} = require("../lib/auth/credentials");
+const {
+  createSession,
+  setSessionCookie,
+  clearSessionCookie,
+  parseCookies,
+  buildAuthMePayload,
+  SESSION_STORE,
+} = require("../lib/auth/session");
+const {
+  normalizeNext,
+  resolvePostLoginRoute,
+} = require("../lib/auth/redirects");
 
 function register(app, ctx) {
-  const {
-    express,
-    getAuthStore,
-    getMatchedAccount,
-    createSession,
-    setSessionCookie,
-    clearSessionCookie,
-    SESSION_STORE,
-    parseCookies,
-    buildAuthMePayload,
-    normalizeNext,
-    resolvePostLoginRoute,
-    renderLoginPage,
-  } = ctx;
+  const { express, renderLoginPage } = ctx;
 
   app.post(
     "/api/auth/login",

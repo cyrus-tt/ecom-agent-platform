@@ -16,9 +16,9 @@
 
 const metrics = require("../lib/metrics");
 const { buildMetricsAuth } = require("../middleware/metricsAuth");
+const { requireAdmin } = require("../middleware/requireAdmin");
 
-function register(app, ctx) {
-  const { requireAdmin } = ctx;
+function register(app) {
   const metricsAuth = buildMetricsAuth(requireAdmin);
 
   app.get("/api/metrics", metricsAuth, async (_req, res, next) => {
