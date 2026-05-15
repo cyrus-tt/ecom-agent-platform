@@ -15,6 +15,15 @@ const analysisContextProvider = require("./services/analysisContextProvider");
 const appConfig = require("./services/appConfig");
 const runtimeSecrets = require("./services/runtimeSecrets");
 const toolsModule = require("./services/tools");
+const biQueryService = require("./services/biQueryService");
+const dispatchModule = require("./services/dispatch");
+const passwordPolicy = require("./lib/passwordPolicy");
+const { Semaphore, limitConcurrency } = require("./lib/concurrencyLimit");
+
+// F-PERF-40C §S6: 重操作并发保护，防止 Excel 导出 / AI 报告生成拖垮普通看板访问
+// Excel 4 个 endpoint 共用 ≤2 / AI 报告 ≤1
+const EXCEL_EXPORT_SEMAPHORE = new Semaphore(2, "excel-export");
+const AI_REPORT_SEMAPHORE = new Semaphore(1, "ai-report");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -29,6 +38,7 @@ const WEB_INDEX_PATH = path.join(WEB_DIST_DIR, "index.html");
 const AUTH_CONFIG_DEFAULT_PATH = path.join(BASE_DIR, "config", "auth.json");
 const AUTH_CONFIG_LOCAL_PATH = path.join(BASE_DIR, "config", "auth.local.json");
 const AUTH_CONFIG_BACKUP_PATH = path.join(BASE_DIR, "runtime", "auth_config_backup.json");
+const SESSION_FILE_PATH = path.join(BASE_DIR, "runtime", "sessions.json");
 const ARRIVAL_BASE = appConfig.arrivalServiceUrl;
 const NOTES_BASE = appConfig.notesServiceUrl;
 const ARRIVAL_PROJECT_DIR = appConfig.arrivalProjectDir;
@@ -56,6 +66,8 @@ const AUTH_PERMISSION_MODULES = [
   { key: "dashboard", label: "可视化", route: "/dashboard", description: "综合数据可视化看板" },
   { key: "channel_dashboard", label: "渠道", route: "/channel-dashboard", description: "渠道店铺看板" },
   { key: "analysis", label: "分析", route: "/analysis", description: "AI 经营分析与历史报告" },
+  { key: "bi", label: "ChatBI", route: "/bi", description: "AI 生成 SQL + 拖拽透视表" },
+  ...(dispatchModule.isEnabled() ? [dispatchModule.PERMISSION_MODULE] : []),
   ...(toolsModule.isEnabled() ? [toolsModule.PERMISSION_MODULE] : []),
 ];
 
@@ -78,6 +90,29 @@ function writeJsonAtomic(filePath, data) {
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
   fs.renameSync(tmpPath, filePath);
+}
+
+function persistSessions() {
+  const entries = [];
+  for (const [sid, s] of SESSION_STORE.entries()) {
+    entries.push({ sid, account_id: s.account_id, created_at: s.created_at, expires_at: s.expires_at });
+  }
+  try {
+    fs.mkdirSync(path.dirname(SESSION_FILE_PATH), { recursive: true });
+    writeJsonAtomic(SESSION_FILE_PATH, entries);
+  } catch (_) { /* best-effort */ }
+}
+
+function loadPersistedSessions() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SESSION_FILE_PATH, "utf8"));
+    const now = Date.now();
+    for (const s of raw) {
+      if (s && s.sid && now < Number(s.expires_at || 0)) {
+        SESSION_STORE.set(s.sid, { sid: s.sid, account_id: s.account_id, created_at: s.created_at, expires_at: s.expires_at });
+      }
+    }
+  } catch (_) { /* file missing or corrupt — start fresh */ }
 }
 
 function escapeHtml(text) {
@@ -135,6 +170,8 @@ function normalizeAuthAccount(raw, fallbackUsername, fallbackPasswordHash, index
     password_hash: passwordHash,
     is_admin: raw.is_admin !== false,
     permissions: normalizePermissionKeys(raw.permissions, fallbackPermissions),
+    default_channels: Array.isArray(raw.default_channels) ? raw.default_channels.filter((c) => typeof c === "string" && c) : [],
+    default_categories: Array.isArray(raw.default_categories) ? raw.default_categories.filter((c) => typeof c === "string" && c) : [],
   };
 }
 
@@ -342,6 +379,9 @@ function isRouteAllowedForAccount(account, pathname) {
   if (routePath.startsWith("/analysis")) {
     return accountHasPermission(account, "analysis");
   }
+  if (routePath.startsWith("/bi")) {
+    return accountHasPermission(account, "bi");
+  }
   if (routePath.startsWith("/admin/accounts")) {
     return account?.is_admin === true;
   }
@@ -364,6 +404,8 @@ function exportAuthConfig(authStore = getAuthStore()) {
       password_hash: account.password_hash,
       is_admin: account.id === authStore.primary_admin_id,
       permissions: account.id === authStore.primary_admin_id ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account.permissions, []),
+      default_channels: Array.isArray(account.default_channels) ? account.default_channels : [],
+      default_categories: Array.isArray(account.default_categories) ? account.default_categories : [],
     })),
   };
 }
@@ -407,6 +449,8 @@ function sanitizeAccountForClient(account) {
     is_primary_admin: isPrimaryAdminAccount(account.id),
     permissions: account.is_admin === true ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account.permissions, []),
     preferred_route: resolvePreferredRouteForAccount(account),
+    default_channels: Array.isArray(account.default_channels) ? account.default_channels : [],
+    default_categories: Array.isArray(account.default_categories) ? account.default_categories : [],
   };
 }
 
@@ -418,6 +462,8 @@ function cloneAccountForMutation(account) {
     password_hash: account.password_hash,
     is_admin: account.is_admin === true,
     permissions: normalizePermissionKeys(account.permissions, []),
+    default_channels: Array.isArray(account.default_channels) ? [...account.default_channels] : [],
+    default_categories: Array.isArray(account.default_categories) ? [...account.default_categories] : [],
   };
 }
 
@@ -444,6 +490,10 @@ function validateAccountPassword(password) {
   if (nextPassword.length > 128) {
     throw new Error("password is too long");
   }
+  const policyResult = passwordPolicy.validate(nextPassword);
+  if (!policyResult.ok) {
+    throw new Error(policyResult.reasons.join("；"));
+  }
   return nextPassword;
 }
 
@@ -454,7 +504,7 @@ function updateAuthStore(mutator) {
   return persistAuthStore(buildAuthStore(draft));
 }
 
-function createManagedAccount({ name, password, permissions }) {
+function createManagedAccount({ name, password, permissions, default_channels, default_categories }) {
   const nextPassword = validateAccountPassword(password);
   const nextStore = updateAuthStore((draft) => {
     const nextName = validateAccountName(name, draft.accounts);
@@ -465,6 +515,8 @@ function createManagedAccount({ name, password, permissions }) {
       password_hash: sha256(nextPassword),
       is_admin: false,
       permissions: normalizePermissionKeys(permissions, []),
+      default_channels: Array.isArray(default_channels) ? default_channels.filter((c) => typeof c === "string" && c) : [],
+      default_categories: Array.isArray(default_categories) ? default_categories.filter((c) => typeof c === "string" && c) : [],
     });
   });
   return nextStore.accounts[nextStore.accounts.length - 1] || null;
@@ -492,6 +544,22 @@ function updateManagedAccountPassword(accountId, password) {
       throw new Error("account not found");
     }
     target.password_hash = sha256(nextPassword);
+  });
+  return getAuthAccountById(accountId);
+}
+
+function updateManagedAccountDefaults(accountId, { default_channels, default_categories }) {
+  updateAuthStore((draft) => {
+    const target = draft.accounts.find((item) => item.id === accountId);
+    if (!target) {
+      throw new Error("account not found");
+    }
+    if (Array.isArray(default_channels)) {
+      target.default_channels = default_channels.filter((c) => typeof c === "string" && c);
+    }
+    if (Array.isArray(default_categories)) {
+      target.default_categories = default_categories.filter((c) => typeof c === "string" && c);
+    }
   });
   return getAuthAccountById(accountId);
 }
@@ -657,11 +725,12 @@ function cleanupSessions() {
   }
 }
 
-function createSession(account) {
+function createSession(account, options = {}) {
   cleanupSessions();
   const sid = crypto.randomBytes(24).toString("hex");
   const authStore = getAuthStore();
-  const expiresAt = Date.now() + authStore.session_ttl_seconds * 1000;
+  const sessionLifetimeMs = options.remember === true ? REMEMBER_ME_MAX_AGE_MS : authStore.session_ttl_seconds * 1000;
+  const expiresAt = Date.now() + sessionLifetimeMs;
   const session = {
     sid,
     account_id: String(account?.id || ""),
@@ -669,6 +738,7 @@ function createSession(account) {
     expires_at: expiresAt,
   };
   SESSION_STORE.set(sid, session);
+  persistSessions();
   return getAuthAccountById(session.account_id)
     ? {
         ...session,
@@ -678,6 +748,8 @@ function createSession(account) {
         permissions: account?.is_admin === true ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account?.permissions, []),
         shared_username: authStore.username,
         preferred_route: resolvePreferredRouteForAccount(account),
+        default_channels: Array.isArray(account?.default_channels) ? account.default_channels : [],
+        default_categories: Array.isArray(account?.default_categories) ? account.default_categories : [],
       }
     : null;
 }
@@ -746,18 +818,31 @@ function getSessionByRequest(req) {
     preferred_route: resolvePreferredRouteForAccount(account),
     created_at: Number(session.created_at || Date.now()),
     expires_at: Number(session.expires_at || 0),
+    default_channels: Array.isArray(account.default_channels) ? account.default_channels : [],
+    default_categories: Array.isArray(account.default_categories) ? account.default_categories : [],
   };
 }
 
-function setSessionCookie(res, sid) {
+const REMEMBER_ME_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 天
+
+function setSessionCookie(res, sid, options = {}) {
   const authStore = getAuthStore();
-  res.cookie(authStore.cookie_name, sid, {
+  const cookieOptions = {
     httpOnly: true,
     sameSite: "lax",
     secure: AUTH_COOKIE_SECURE,
     path: "/",
-    maxAge: authStore.session_ttl_seconds * 1000,
-  });
+  };
+  // remember=true → 30 天免登；remember=false → session-only（关浏览器即失效）；
+  // 未传 remember → 沿用 session_ttl_seconds（兼容旧 setSessionCookie(res, sid) 调用）
+  if (options.remember === true) {
+    cookieOptions.maxAge = REMEMBER_ME_MAX_AGE_MS;
+  } else if (options.remember === false) {
+    // 不设 maxAge / expires → 浏览器视为 session cookie，关闭即失效
+  } else {
+    cookieOptions.maxAge = authStore.session_ttl_seconds * 1000;
+  }
+  res.cookie(authStore.cookie_name, sid, cookieOptions);
 }
 
 function clearSessionCookie(res) {
@@ -786,7 +871,10 @@ function isPublicPath(pathname) {
     pathname === "/readyz" ||
     pathname === "/favicon.ico" ||
     pathname === "/login.css" ||
-    pathname === "/login.js"
+    pathname === "/login.js" ||
+    pathname.startsWith("/dispatch/confirm/") ||
+    pathname === "/api/dispatch/public/preview" ||
+    pathname === "/api/dispatch/public/confirm"
   );
 }
 
@@ -801,6 +889,8 @@ function buildAuthMePayload(session) {
     shared_username: session.shared_username || getAuthStore().username,
     preferred_route: session.preferred_route || resolvePreferredRouteForPermissions(session.permissions),
     expires_at: new Date(session.expires_at).toISOString(),
+    default_channels: Array.isArray(session.default_channels) ? session.default_channels : [],
+    default_categories: Array.isArray(session.default_categories) ? session.default_categories : [],
   };
 }
 
@@ -1225,6 +1315,15 @@ function startManagedJob(spec) {
     job.status = job.exit_code === 0 ? "succeeded" : "failed";
     job.ended_at = new Date().toISOString();
     RUNNING_JOB_BY_TYPE.delete(type);
+    // F-PERF-40C §S3: rebuild-weekly 成功完成后自动清缓存，避免用户看到旧数据
+    if (type === "rebuild-weekly" && job.status === "succeeded") {
+      try {
+        const result = reportRepo.clearAllCaches("rebuild-weekly");
+        appendJobLog(job, "system", `[cache] cleared after rebuild: ${JSON.stringify(result.before)}`);
+      } catch (err) {
+        appendJobLog(job, "warn", `[cache] clear failed: ${String(err && err.message ? err.message : err)}`);
+      }
+    }
   });
 
   return { job, reused: false };
@@ -1473,6 +1572,7 @@ app.post("/api/auth/login", express.json({ limit: "256kb" }), (req, res) => {
   const body = req.body || {};
   const username = String(body.username || "").trim();
   const password = String(body.password || "");
+  const remember = body.remember === true;
   const nextUrl = normalizeNext(body.next);
   const matchedAccount = getMatchedAccount(username, password);
 
@@ -1480,8 +1580,8 @@ app.post("/api/auth/login", express.json({ limit: "256kb" }), (req, res) => {
     return res.status(401).json({ ok: false, message: "账号或密码错误" });
   }
 
-  const session = createSession(matchedAccount);
-  setSessionCookie(res, session.sid);
+  const session = createSession(matchedAccount, { remember });
+  setSessionCookie(res, session.sid, { remember });
   return res.json({
     ...buildAuthMePayload(session),
     next: resolvePostLoginRoute(matchedAccount, nextUrl),
@@ -1500,6 +1600,7 @@ app.get("/logout", (req, res) => {
   const sid = parseCookies(req.headers.cookie)[getAuthStore().cookie_name];
   if (sid) {
     SESSION_STORE.delete(sid);
+    persistSessions();
   }
   clearSessionCookie(res);
   res.redirect("/login");
@@ -1522,9 +1623,55 @@ app.post("/api/auth/logout", (req, res) => {
   const sid = parseCookies(req.headers.cookie)[getAuthStore().cookie_name];
   if (sid) {
     SESSION_STORE.delete(sid);
+    persistSessions();
   }
   clearSessionCookie(res);
   res.json({ ok: true });
+});
+
+// 用户登录后自助修改密码：旧密 + 新密双因素，成功后强制本会话失效要求重登
+app.post("/api/auth/me/password", express.json({ limit: "256kb" }), (req, res) => {
+  if (!req.authSession) {
+    return res.status(401).json({ ok: false, message: "Unauthorized" });
+  }
+  const body = req.body || {};
+  const oldPassword = String(body.oldPassword || "");
+  const newPassword = String(body.newPassword || "");
+
+  const accountId = req.authSession.account_id;
+  const account = getAuthAccountById(accountId);
+  if (!account) {
+    return res.status(404).json({ ok: false, message: "账号不存在" });
+  }
+  if (!verifyPasswordHash(oldPassword, account.password_hash)) {
+    // 注意：用 400 而非 401，避免前端 axios interceptor 把页面跳回登录页（401 = 未登录场景才用）
+    return res.status(400).json({ ok: false, message: "旧密码不正确" });
+  }
+
+  const policyResult = passwordPolicy.validate(newPassword);
+  if (!policyResult.ok) {
+    return res.status(422).json({
+      ok: false,
+      message: policyResult.reasons.join("；"),
+      reasons: policyResult.reasons,
+    });
+  }
+
+  try {
+    updateManagedAccountPassword(accountId, newPassword);
+  } catch (err) {
+    const message = String(err?.message || err);
+    return res.status(400).json({ ok: false, message });
+  }
+
+  const sid = parseCookies(req.headers.cookie)[getAuthStore().cookie_name];
+  if (sid) {
+    SESSION_STORE.delete(sid);
+    persistSessions();
+  }
+  clearSessionCookie(res);
+
+  return res.json({ ok: true, message: "密码已更新，请重新登录" });
 });
 
 app.get("/api/auth/me", (req, res) => {
@@ -1588,6 +1735,7 @@ app.get("/api/admin/accounts", requireAdmin, (_req, res) => {
     shared_username: authStore.username,
     primary_admin_id: authStore.primary_admin_id,
     modules: AUTH_PERMISSION_MODULES,
+    available_channels: reportRepo.getChannelDashboardAvailableChannels(),
     accounts: authStore.accounts.map((account) => sanitizeAccountForClient(account)),
   });
 });
@@ -1598,6 +1746,8 @@ app.post("/api/admin/accounts", requireAdmin, express.json({ limit: "256kb" }), 
       name: req.body?.name,
       password: req.body?.password,
       permissions: req.body?.permissions,
+      default_channels: req.body?.default_channels,
+      default_categories: req.body?.default_categories,
     });
     return res.status(201).json({
       ok: true,
@@ -1628,6 +1778,26 @@ app.patch("/api/admin/accounts/:accountId/permissions", requireAdmin, express.js
 app.patch("/api/admin/accounts/:accountId/password", requireAdmin, express.json({ limit: "256kb" }), (req, res) => {
   try {
     const account = updateManagedAccountPassword(req.params.accountId, req.body?.password);
+    if (!account) {
+      return res.status(404).json({ ok: false, message: "account not found" });
+    }
+    return res.json({
+      ok: true,
+      account: sanitizeAccountForClient(account),
+    });
+  } catch (err) {
+    const message = String(err?.message || err);
+    const status = message === "account not found" ? 404 : 400;
+    return res.status(status).json({ ok: false, message });
+  }
+});
+
+app.patch("/api/admin/accounts/:accountId/defaults", requireAdmin, express.json({ limit: "256kb" }), (req, res) => {
+  try {
+    const account = updateManagedAccountDefaults(req.params.accountId, {
+      default_channels: req.body?.default_channels,
+      default_categories: req.body?.default_categories,
+    });
     if (!account) {
       return res.status(404).json({ ok: false, message: "account not found" });
     }
@@ -1820,6 +1990,17 @@ app.post("/api/admin/refresh-arrival", requireAdmin, async (req, res) => {
   }
 });
 
+// F-PERF-40C §S3: admin 手动清缓存入口（运维 / 调试用；rebuild-weekly 完成会自动清，无需手动）
+app.post("/api/admin/cache/clear", requireAdmin, (req, res) => {
+  try {
+    const result = reportRepo.clearAllCaches("admin-manual");
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    const message = String(err && err.message ? err.message : err);
+    res.status(500).json({ ok: false, message });
+  }
+});
+
 app.post("/api/admin/rebuild-weekly", requireAdmin, (req, res) => {
   try {
     if (!fs.existsSync(PG_PIPELINE_SCRIPT)) {
@@ -1903,7 +2084,7 @@ app.get("/api/report/rows", requirePermission("report_daily"), async (req, res, 
   }
 });
 
-app.get("/api/report/export.xlsx", requirePermission("report_daily"), async (req, res, next) => {
+app.get("/api/report/export.xlsx", requirePermission("report_daily"), limitConcurrency(EXCEL_EXPORT_SEMAPHORE), async (req, res, next) => {
   try {
     const { week } = await reportRepo.resolveWeek(req.query.week);
     if (!week) {
@@ -1926,7 +2107,7 @@ app.get("/api/report/export.xlsx", requirePermission("report_daily"), async (req
   }
 });
 
-app.get("/api/report/gap-template.xlsx", requirePermission("report_daily"), async (req, res, next) => {
+app.get("/api/report/gap-template.xlsx", requirePermission("report_daily"), limitConcurrency(EXCEL_EXPORT_SEMAPHORE), async (req, res, next) => {
   try {
     const { week } = await reportRepo.resolveWeek(req.query.week);
     if (!week) {
@@ -2079,7 +2260,7 @@ async function sendDailyExport(req, res, next, options) {
   }
 }
 
-app.get("/api/report-daily/export.xlsx", requirePermission("report_daily"), async (req, res, next) => {
+app.get("/api/report-daily/export.xlsx", requirePermission("report_daily"), limitConcurrency(EXCEL_EXPORT_SEMAPHORE), async (req, res, next) => {
   await sendDailyExport(req, res, next, {
     bookType: "xlsx",
     ext: "xlsx",
@@ -2087,12 +2268,163 @@ app.get("/api/report-daily/export.xlsx", requirePermission("report_daily"), asyn
   });
 });
 
-app.get("/api/report-daily/export.xlsb", requirePermission("report_daily"), async (req, res, next) => {
+app.get("/api/report-daily/export.xlsb", requirePermission("report_daily"), limitConcurrency(EXCEL_EXPORT_SEMAPHORE), async (req, res, next) => {
   await sendDailyExport(req, res, next, {
     bookType: "xlsb",
     ext: "xlsb",
     contentType: "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
   });
+});
+
+function parseDashboardFilter(query) {
+  const channelCodes = String(query.channels || "").trim()
+    ? String(query.channels).split(",").map((c) => c.trim()).filter(Boolean)
+    : [];
+  const majorCategory = String(query.major_category || "").trim() || "";
+  const category = String(query.category || "").trim() || "";
+  return { channelCodes, majorCategory, category };
+}
+
+// ── ChatBI endpoints ──
+
+app.get("/api/bi/datasets", requirePermission("bi"), (_req, res) => {
+  res.json({ ok: true, datasets: Object.values(biQueryService.PRESET_DATASETS) });
+});
+
+app.post("/api/bi/dataset", requirePermission("bi"), express.json({ limit: "64kb" }), async (req, res) => {
+  try {
+    const key = String(req.body?.key || "").trim();
+    const dateFrom = String(req.body?.date_from || "").trim();
+    const dateTo = String(req.body?.date_to || "").trim();
+    const result = await biQueryService.queryPresetDataset(key, dateFrom, dateTo);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: String(err?.message || err) });
+  }
+});
+
+app.get("/api/bi/templates", requirePermission("bi"), (req, res) => {
+  const accountId = String(req.authSession?.account_id || "");
+  res.json({ ok: true, templates: biQueryService.getTemplatesByAccount(accountId) });
+});
+
+app.post("/api/bi/templates", requirePermission("bi"), express.json({ limit: "64kb" }), (req, res) => {
+  try {
+    const accountId = String(req.authSession?.account_id || "");
+    const tpl = biQueryService.saveTemplate(accountId, {
+      name: req.body?.name,
+      dataset_key: req.body?.dataset_key,
+      pivotState: req.body?.pivotState,
+    });
+    res.status(201).json({ ok: true, template: tpl });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: String(err?.message || err) });
+  }
+});
+
+app.delete("/api/bi/templates/:id", requirePermission("bi"), (req, res) => {
+  try {
+    const accountId = String(req.authSession?.account_id || "");
+    biQueryService.deleteTemplate(accountId, req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: String(err?.message || err) });
+  }
+});
+
+app.get("/api/bi/schema", requirePermission("bi"), async (_req, res, next) => {
+  try {
+    const schema = await biQueryService.getSchemaInfo();
+    res.json({ ok: true, tables: schema });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/api/bi/query", requirePermission("bi"), express.json({ limit: "64kb" }), async (req, res) => {
+  try {
+    const sql = String(req.body?.sql || "").trim();
+    const result = await biQueryService.executeBiQuery(sql);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    const message = String(err?.message || err);
+    const isTimeout = message.includes("timeout") || message.includes("cancel");
+    res.status(isTimeout ? 504 : 400).json({ ok: false, message });
+  }
+});
+
+app.post("/api/bi/ask", requirePermission("bi"), express.json({ limit: "64kb" }), async (req, res) => {
+  const question = String(req.body?.question || "").trim();
+  if (!question) {
+    return res.status(400).json({ ok: false, message: "question is required" });
+  }
+  const apiKey = runtimeSecrets.getDeepseekApiKey();
+  if (!apiKey) {
+    return res.status(503).json({ ok: false, message: "AI 服务未配置 API Key" });
+  }
+  try {
+    const { OpenAI } = require("openai");
+    const schema = await biQueryService.getSchemaInfo();
+    const schemaText = biQueryService.buildSchemaPromptText(schema);
+    const client = new OpenAI({
+      apiKey,
+      baseURL: String(process.env.DEEPSEEK_BASE_URL || runtimeSecrets.DEFAULT_DEEPSEEK_BASE_URL),
+    });
+    const systemPrompt = [
+      "你是安踏电商数据库 SQL 专家。用户会用自然语言描述数据需求，你需要生成 PostgreSQL SELECT 查询。",
+      "",
+      "规则：",
+      "1. 只能生成 SELECT 语句（可用 WITH CTE），禁止任何写操作",
+      `2. 必须包含 LIMIT（最大 ${biQueryService.MAX_ROWS}）`,
+      "3. 所有表都在 anta_daily schema 下，查询时必须加 schema 前缀 anta_daily.",
+      "4. 返回 JSON 格式，包含 sql、pivotConfig、title 三个字段",
+      "5. pivotConfig 格式：{ rows: [列名数组], cols: [列名数组], vals: [列名数组], aggregatorName: '聚合方式' }",
+      "6. aggregatorName 可选值：Sum, Count, Average, Maximum, Minimum",
+      "7. 业务术语：出库金额=sales_total_amount, 销量=sales_total_qty, 吊牌价=tag_price, 渠道=各 sales_xxx_qty 列",
+      "",
+      "数据库表结构：",
+      schemaText,
+      "",
+      "只返回 JSON，不要任何解释文字。",
+    ].join("\n");
+    const completion = await client.chat.completions.create({
+      model: String(process.env.DEEPSEEK_MODEL || runtimeSecrets.DEFAULT_DEEPSEEK_MODEL),
+      temperature: 0.1,
+      max_tokens: 2000,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: question },
+      ],
+    }, { timeout: 60000 });
+    const raw = String(completion.choices?.[0]?.message?.content || "").trim();
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return res.status(500).json({ ok: false, message: "AI 返回格式异常", raw });
+    }
+    const parsed = JSON.parse(jsonMatch[0]);
+    res.json({
+      ok: true,
+      sql: String(parsed.sql || ""),
+      pivotConfig: parsed.pivotConfig || {},
+      title: String(parsed.title || ""),
+      model: String(completion.model || ""),
+    });
+  } catch (err) {
+    const message = String(err?.message || err);
+    res.status(500).json({ ok: false, message });
+  }
+});
+
+// ── Dashboard endpoints ──
+
+app.get("/api/dashboard/filter-options", requirePermission("dashboard"), async (_req, res, next) => {
+  try {
+    const channels = reportRepo.getChannelDashboardAvailableChannels();
+    const categories = await reportRepo.getAvailableCategories();
+    res.json({ ok: true, channels, categories });
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.get("/api/dashboard/dates", requirePermission("dashboard"), async (_req, res, next) => {
@@ -2112,7 +2444,8 @@ app.get("/api/dashboard/overview", requirePermission("dashboard"), async (req, r
     const anchorDate = String(req.query.anchor_date || "").trim();
     const dateFrom = String(req.query.date_from || "").trim();
     const dateTo = String(req.query.date_to || "").trim();
-    const payload = await reportRepo.getDashboardOverview(anchorDate, dateFrom, dateTo);
+    const filter = parseDashboardFilter(req.query);
+    const payload = await reportRepo.getDashboardOverview(anchorDate, dateFrom, dateTo, filter);
     res.json({
       ok: true,
       ...payload,
@@ -2129,10 +2462,12 @@ app.get("/api/dashboard/channel-compare", requirePermission("dashboard"), async 
     const rawChannels = Array.isArray(req.query.channels)
       ? req.query.channels.join(",")
       : String(req.query.channels || "").trim();
+    const filter = parseDashboardFilter(req.query);
     const payload = await reportRepo.getDashboardChannelCompare({
       dateFromText: dateFrom,
       dateToText: dateTo,
       channelCodesText: rawChannels,
+      filter,
     });
     res.json({
       ok: true,
@@ -2164,6 +2499,7 @@ app.get("/api/dashboard/drilldown", requirePermission("dashboard"), async (req, 
       return res.status(400).json({ ok: false, message: "style is required when level=sku" });
     }
 
+    const filter = parseDashboardFilter(req.query);
     const payload = await reportRepo.getDashboardDrilldown({
       anchorDateText: anchorDate,
       dateFromText: dateFrom,
@@ -2173,6 +2509,7 @@ app.get("/api/dashboard/drilldown", requirePermission("dashboard"), async (req, 
       style,
       page,
       pageSize,
+      channelCodes: filter.channelCodes,
     });
     res.json({
       ok: true,
@@ -2193,6 +2530,7 @@ app.get("/api/channel-dashboard", requirePermission("channel_dashboard"), async 
     const rawChannels = Array.isArray(req.query.channels)
       ? req.query.channels.join(",")
       : String(req.query.channels || "").trim();
+    const filter = parseDashboardFilter(req.query);
     const payload = await reportRepo.getChannelDashboard({
       anchorDateText: anchorDate,
       dateFromText: dateFrom,
@@ -2200,6 +2538,7 @@ app.get("/api/channel-dashboard", requirePermission("channel_dashboard"), async 
       channelCodesText: rawChannels,
       comparisonDateFromText: comparisonDateFrom,
       comparisonDateToText: comparisonDateTo,
+      filter,
     });
     res.json({
       ok: true,
@@ -2225,12 +2564,14 @@ app.get("/api/channel-dashboard/drilldown", requirePermission("channel_dashboard
       return res.status(400).json({ ok: false, message: "style is required" });
     }
 
+    const filter = parseDashboardFilter(req.query);
     const payload = await reportRepo.getChannelDashboardStyleDrilldown({
       anchorDateText: anchorDate,
       dateFromText: dateFrom,
       dateToText: dateTo,
       channelCode: channel,
       style,
+      filter,
     });
     res.json({
       ok: true,
@@ -2263,7 +2604,7 @@ app.get("/api/agent/context", requireAgentContextAccess, async (req, res, next) 
   }
 });
 
-app.post("/api/agent/run", requirePermission("analysis"), express.json({ limit: "1mb" }), async (req, res, next) => {
+app.post("/api/agent/run", requirePermission("analysis"), express.json({ limit: "1mb" }), limitConcurrency(AI_REPORT_SEMAPHORE), async (req, res, next) => {
   try {
     res.setTimeout(95000);
     const body = req.body && typeof req.body === "object" ? req.body : {};
@@ -2446,9 +2787,25 @@ app.get(["/analysis", "/analysis/"], requirePermission("analysis"), (_req, res) 
   sendReactApp(res);
 });
 
+app.get(["/bi", "/bi/"], requirePermission("bi"), (_req, res) => {
+  sendReactApp(res);
+});
+
 app.get(["/arrival", "/arrival/"], requirePermission("arrival"), (_req, res) => {
   sendReactApp(res);
 });
+
+// ── dispatch agent (开关由 DISPATCH_AGENT_ENABLED 控制) ──
+if (dispatchModule.isEnabled()) {
+  app.get(["/dispatch", "/dispatch/"], requirePermission("dispatch"), (_req, res) => {
+    sendReactApp(res);
+  });
+  // 需求人确认页:走一次性 token,不要求登录
+  app.get(["/dispatch/confirm/:taskId", "/dispatch/confirm/:taskId/"], (_req, res) => {
+    sendReactApp(res);
+  });
+  dispatchModule.tryRegister(app, { requirePermission });
+}
 
 app.use((err, _req, res, _next) => {
   const message = String(err && err.message ? err.message : err);
@@ -2456,6 +2813,7 @@ app.use((err, _req, res, _next) => {
 });
 
 function startServer() {
+  loadPersistedSessions();
   return app.listen(port, host, () => {
     const ips = getLanIps();
     const lanHint = ips.length ? ips.map((ip) => `http://${ip}:${port}`).join(" | ") : "N/A";
@@ -2485,9 +2843,31 @@ function startServer() {
         }
         await reportRepo.getDashboardOverview("", dashboardDates.default_date_from, dashboardDates.default_date_to);
         console.log(`[warmup] dashboard cache ready for ${dashboardDates.default_date_from}~${dashboardDates.default_date_to}`);
+
+        // F-PERF-40C §S7: 扩充预热到 channel-dashboard 默认参数，让早高峰冷查询全部命中预热缓存
+        try {
+          await reportRepo.getChannelDashboard({
+            anchorDateText: dashboardDates.default_date_from,
+            dateFromText: dashboardDates.default_date_from,
+            dateToText: dashboardDates.default_date_to,
+          });
+          console.log(`[warmup] channel-dashboard cache ready for ${dashboardDates.default_date_from}~${dashboardDates.default_date_to}`);
+        } catch (err) {
+          const msg = String(err && err.message ? err.message : err);
+          console.warn(`[warmup] channel-dashboard cache failed: ${msg}`);
+        }
       } catch (err) {
         const msg = String(err && err.message ? err.message : err);
         console.warn(`[warmup] dashboard cache failed: ${msg}`);
+      }
+
+      // F-PERF-40C §S7: 预热 daily dates 选项缓存（用户打开日报第一件事就是看可选日期）
+      try {
+        await reportRepo.getDailyDateChoices();
+        console.log(`[warmup] daily-dates cache ready`);
+      } catch (err) {
+        const msg = String(err && err.message ? err.message : err);
+        console.warn(`[warmup] daily-dates cache failed: ${msg}`);
       }
     }, 200);
   });

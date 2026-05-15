@@ -6,8 +6,17 @@
     "user": "ecom_app",
     "password": "ecom123456",
     "ssl": false,
-    "connection_timeout_ms": 10000,
-    "statement_timeout_ms": 120000,
-    "max_pool_size": 10
+    "connection_timeout_ms": 30000,
+    "statement_timeout_ms": 180000,
+    "idle_timeout_ms": 30000,
+    "max_pool_size": 25
+  },
+  "postgres_bi_readonly": {
+    "host": "127.0.0.1",
+    "port": 5432,
+    "database": "ecom_dashboard_v2",
+    "user": "bi_readonly",
+    "password": "bi_readonly_2026",
+    "ssl": false
   }
 }

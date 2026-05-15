@@ -14,14 +14,19 @@
       <form id="loginForm" autocomplete="off">
         <label>
           固定登录用户名
-          <input id="username" name="username" type="text" readonly value="__SHARED_USERNAME__">
+          <input id="username" name="username" type="text" readonly autocomplete="username" value="__SHARED_USERNAME__">
         </label>
         <label>
           账号密码
           <input id="password" name="password" type="password" required autocomplete="current-password">
         </label>
+        <label class="login-remember">
+          <input id="remember" name="remember" type="checkbox">
+          <span>30 天内免登录（仅在私人电脑勾选）</span>
+        </label>
         <button id="submitBtn" type="submit">登录</button>
       </form>
+      <div class="login-forgot">忘记密码？请在钉钉联系 <strong>Cyrus</strong></div>
       <div class="login-tip">如需新增或调整子账号权限，请使用主账号登录后进入“账号权限”看板。</div>
       <div id="errorMsg" class="error"></div>
     </section>

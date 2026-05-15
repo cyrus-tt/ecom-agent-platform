@@ -493,6 +493,54 @@ body {
   line-height: 1.2;
 }
 
+.channel-style-link {
+  display: inline-flex;
+  max-width: 100%;
+  height: auto;
+  min-height: 24px;
+  padding: 0;
+  white-space: normal;
+  word-break: break-all;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.channel-style-value {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.channel-style-expand-hint {
+  font-size: 10px;
+}
+
+.channel-style-drilldown {
+  padding: 8px;
+  border: 1px solid #dce7f9;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+}
+
+.channel-panel-table .ant-table-expanded-row > .ant-table-cell {
+  padding: 8px !important;
+  background: #f8fbff;
+}
+
+.channel-style-drilldown-summary {
+  margin-bottom: 8px;
+}
+
+.channel-style-drilldown-error {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.channel-style-drilldown-table .ant-table {
+  font-size: 10.5px;
+}
+
 .channel-panel-table .ant-table-thead > tr > th.ant-table-cell-ellipsis,
 .channel-panel-table .ant-table-tbody > tr > td.ant-table-cell-ellipsis {
   overflow: hidden;

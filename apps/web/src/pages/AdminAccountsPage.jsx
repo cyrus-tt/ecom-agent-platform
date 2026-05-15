@@ -1,5 +1,5 @@
-import { KeyOutlined, PlusOutlined, ReloadOutlined, SafetyCertificateOutlined, SaveOutlined, UserAddOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Checkbox, Descriptions, Drawer, Input, Modal, Space, Table, Tag, Typography, message } from "antd";
+import { KeyOutlined, PlusOutlined, ReloadOutlined, SafetyCertificateOutlined, SaveOutlined, SettingOutlined, UserAddOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, Checkbox, Descriptions, Drawer, Input, Modal, Select, Space, Table, Tag, Typography, message } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import http from "../api/http";
 import { useAuth } from "../auth/AuthContext";
@@ -32,6 +32,9 @@ export default function AdminAccountsPage() {
   const [newAccountPassword, setNewAccountPassword] = useState("");
   const [newAccountPermissions, setNewAccountPermissions] = useState([]);
   const [passwordModal, setPasswordModal] = useState({ open: false, account: null, value: "" });
+  const [availableChannels, setAvailableChannels] = useState([]);
+  const [draftDefaults, setDraftDefaults] = useState({});
+  const [savingDefaultsId, setSavingDefaultsId] = useState("");
 
   useEffect(() => {
     void loadAccounts();
@@ -48,10 +51,20 @@ export default function AdminAccountsPage() {
       setModules(nextModules);
       setAccounts(nextAccounts);
       setSharedUsername(String(resp.data?.shared_username || ""));
+      setAvailableChannels(Array.isArray(resp.data?.available_channels) ? resp.data.available_channels : []);
       setDraftPermissions(
         Object.entries(permissionsToMap(nextAccounts)).reduce((accumulator, [accountId, permissions]) => {
           accumulator[accountId] = sortPermissions(permissions, nextModules);
           return accumulator;
+        }, {})
+      );
+      setDraftDefaults(
+        nextAccounts.reduce((acc, account) => {
+          acc[account.id] = {
+            default_channels: Array.isArray(account.default_channels) ? account.default_channels : [],
+            default_categories: Array.isArray(account.default_categories) ? account.default_categories : [],
+          };
+          return acc;
         }, {})
       );
     } catch (err) {
@@ -94,6 +107,30 @@ export default function AdminAccountsPage() {
       message.error(err?.response?.data?.message || err.message || "保存权限失败");
     } finally {
       setSavingAccountId("");
+    }
+  }
+
+  function isDefaultsDirty(account) {
+    const draft = draftDefaults[account.id] || {};
+    const srcChannels = (Array.isArray(account.default_channels) ? account.default_channels : []).join(",");
+    const draftChannels = (Array.isArray(draft.default_channels) ? draft.default_channels : []).join(",");
+    return srcChannels !== draftChannels;
+  }
+
+  async function saveDefaults(account) {
+    setSavingDefaultsId(account.id);
+    try {
+      const draft = draftDefaults[account.id] || {};
+      await http.patch(`/api/admin/accounts/${encodeURIComponent(account.id)}/defaults`, {
+        default_channels: draft.default_channels || [],
+        default_categories: draft.default_categories || [],
+      });
+      message.success(`已更新 ${account.name} 的默认筛选`);
+      await loadAccounts();
+    } catch (err) {
+      message.error(err?.response?.data?.message || err.message || "保存默认筛选失败");
+    } finally {
+      setSavingDefaultsId("");
     }
   }
 
@@ -167,6 +204,8 @@ export default function AdminAccountsPage() {
       ),
     }));
 
+    const channelSelectOptions = availableChannels.map((ch) => ({ label: ch.label, value: ch.code }));
+
     return [
       {
         title: "账号",
@@ -186,6 +225,27 @@ export default function AdminAccountsPage() {
       },
       ...moduleColumns,
       {
+        title: "默认渠道",
+        key: "default_channels",
+        width: 280,
+        render: (_, row) => (
+          <Select
+            mode="multiple"
+            style={{ width: "100%" }}
+            placeholder="全部渠道"
+            value={draftDefaults[row.id]?.default_channels || []}
+            options={channelSelectOptions}
+            maxTagCount={2}
+            onChange={(values) =>
+              setDraftDefaults((prev) => ({
+                ...prev,
+                [row.id]: { ...(prev[row.id] || {}), default_channels: values },
+              }))
+            }
+          />
+        ),
+      },
+      {
         title: "操作",
         key: "action",
         width: 220,
@@ -202,6 +262,14 @@ export default function AdminAccountsPage() {
               保存权限
             </Button>
             <Button
+              icon={<SettingOutlined />}
+              loading={savingDefaultsId === row.id}
+              disabled={!isDefaultsDirty(row)}
+              onClick={() => void saveDefaults(row)}
+            >
+              保存默认
+            </Button>
+            <Button
               icon={<KeyOutlined />}
               loading={passwordAccountId === row.id}
               onClick={() => setPasswordModal({ open: true, account: row, value: "" })}
@@ -212,7 +280,7 @@ export default function AdminAccountsPage() {
         ),
       },
     ];
-  }, [auth?.accountId, draftPermissions, modules, passwordAccountId, savingAccountId, sharedUsername]);
+  }, [auth?.accountId, availableChannels, draftDefaults, draftPermissions, modules, passwordAccountId, savingAccountId, savingDefaultsId, sharedUsername]);
 
   return (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>

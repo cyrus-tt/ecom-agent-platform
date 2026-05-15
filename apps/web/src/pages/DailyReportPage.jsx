@@ -145,16 +145,30 @@ function buildDailyColumns(meta) {
     sections.push({ title: currentTitle, children: currentChildren, startIndex: currentStartIndex });
   }
 
-  return sections.flatMap((section, index) => {
+  const splitSections = [];
+  for (const section of sections) {
+    const fixedChildren = section.children.filter((_, i) => section.startIndex + i <= LAST_FIXED_LEFT_COLUMN_INDEX);
+    const scrollChildren = section.children.slice(fixedChildren.length);
+    if (fixedChildren.length && scrollChildren.length) {
+      splitSections.push({ ...section, children: fixedChildren });
+      splitSections.push({ ...section, children: scrollChildren, startIndex: section.startIndex + fixedChildren.length });
+    } else {
+      splitSections.push(section);
+    }
+  }
+
+  return splitSections.flatMap((section, index) => {
     if (!section.title) {
       return section.children;
     }
+    const hasFixed = section.startIndex <= LAST_FIXED_LEFT_COLUMN_INDEX;
     const surfaceClassName = resolveDailySurfaceClass(section.startIndex);
     return [
       {
         key: `group_${index}`,
         title: section.title,
         className: surfaceClassName,
+        fixed: hasFixed ? "left" : undefined,
         onHeaderCell: () => ({
           className: surfaceClassName,
         }),
@@ -176,12 +190,51 @@ export default function DailyReportPage() {
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [loading, setLoading] = useState(false);
   const loadRequestRef = useRef(0);
+  const tableShellRef = useRef(null);
+  const [isGroupHeaderCollapsed, setIsGroupHeaderCollapsed] = useState(false);
+  const columns = useMemo(() => buildDailyColumns(meta), [meta]);
 
   useEffect(() => {
     void initPage();
   }, []);
 
-  const columns = useMemo(() => buildDailyColumns(meta), [meta]);
+  useEffect(() => {
+    const shell = tableShellRef.current;
+    if (!shell) {
+      return undefined;
+    }
+
+    let frameId = 0;
+    let body = shell.querySelector(".ant-table-body");
+
+    const syncScrolled = () => {
+      frameId = 0;
+      setIsGroupHeaderCollapsed(Boolean(body && body.scrollTop > 0));
+    };
+
+    const handleScroll = () => {
+      if (frameId) {
+        return;
+      }
+      frameId = window.requestAnimationFrame(syncScrolled);
+    };
+
+    if (!body) {
+      setIsGroupHeaderCollapsed(false);
+      return undefined;
+    }
+
+    syncScrolled();
+    body.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+      }
+      body.removeEventListener("scroll", handleScroll);
+    };
+  }, [columns.length, rows.length, page, pageSize]);
+
   const dataSource = useMemo(
     () =>
       rows.map((values, index) => ({
@@ -395,20 +448,27 @@ export default function DailyReportPage() {
       </Card>
 
       <Card bordered={false} size="small" bodyStyle={{ padding: 0 }}>
-        <Table
-          rowKey="key"
-          className="app-compact-table daily-report-table"
-          columns={columns}
-          dataSource={dataSource}
-          loading={loading}
-          pagination={pagination}
-          size="small"
-          tableLayout="fixed"
-          scroll={{ x: "max-content", y: 620 }}
-          locale={{
-            emptyText: loading ? "正在加载..." : "暂无数据",
-          }}
-        />
+        <div
+          ref={tableShellRef}
+          className={["daily-report-table-shell", isGroupHeaderCollapsed ? "is-group-header-collapsed" : ""]
+            .filter(Boolean)
+            .join(" ")}
+        >
+          <Table
+            rowKey="key"
+            className="app-compact-table daily-report-table"
+            columns={columns}
+            dataSource={dataSource}
+            loading={loading}
+            pagination={pagination}
+            size="small"
+            tableLayout="fixed"
+            scroll={{ x: "max-content", y: 620 }}
+            locale={{
+              emptyText: loading ? "正在加载..." : "暂无数据",
+            }}
+          />
+        </div>
       </Card>
     </Space>
   );

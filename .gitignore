@@ -1,9 +1,27 @@
 node_modules/
 dist/
 build/
+
+# F-PERF-40C §S8: ignore all runtime artifacts and source data dirs (生成产物 + 上游数据，不入 git)
+runtime/
+apps/runtime/
+data/inbox/
+data/prepared/
+data/archive/
+data/dispatch/
+
+# 已存在的精细规则（保留为冗余防御，避免子目录 unignore 时漏网）
 runtime/pids/
 runtime/*.log
+runtime/logs/
+runtime/login*.json
+runtime/smoke-last.json
+runtime/tmp-*
+
 .env
 .env.local
+apps/gateway/config/auth.local.backup-*.json
+tools/node-v*-win-x64/
+tools/node-v*-win-x64.zip
 .DS_Store
 Thumbs.db

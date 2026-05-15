@@ -14,6 +14,8 @@ function normalizeAuthPayload(data) {
     sharedUsername: String(data?.shared_username || "").trim(),
     preferredRoute: String(data?.preferred_route || "").trim() || NO_ACCESS_ROUTE,
     expiresAt: String(data?.expires_at || "").trim(),
+    defaultChannels: Array.isArray(data?.default_channels) ? data.default_channels : [],
+    defaultCategories: Array.isArray(data?.default_categories) ? data.default_categories : [],
   };
 }
 
