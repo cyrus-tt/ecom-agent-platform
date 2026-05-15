@@ -12,10 +12,6 @@ const orchestrator = require("./orchestrator");
 let multer = null;
 try { multer = require("multer"); } catch {}
 
-function ensureInit() {
-  taskStore.init();
-}
-
 function makeUploader() {
   if (!multer) {
     throw new Error("multer 未安装,请在 apps/gateway 下运行: npm install multer");
@@ -41,15 +37,11 @@ function makeUploader() {
 }
 
 function registerRoutes(app, { requirePermission }) {
-  ensureInit();
-
   // 给上传请求分配 taskId(放最前面做中间件)
   const assignTaskId = (req, _res, next) => {
     req._dispatchTaskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     next();
   };
-
-  const uploader = multer ? makeUploader() : null;
 
   // ── 任务:上传并创建 ─────────────────────────────────
   app.post(
@@ -57,8 +49,14 @@ function registerRoutes(app, { requirePermission }) {
     requirePermission("dispatch"),
     assignTaskId,
     (req, res, next) => {
-      if (!uploader) {
+      if (!multer) {
         return res.status(500).json({ ok: false, message: "multer 未安装" });
+      }
+      let uploader = null;
+      try {
+        uploader = makeUploader();
+      } catch (err) {
+        return res.status(500).json({ ok: false, message: String(err.message || err) });
       }
       uploader.fields([
         { name: "demand", maxCount: 1 },
@@ -169,6 +167,7 @@ function registerRoutes(app, { requirePermission }) {
   // ── 需求表预览(给确认页用),用 token 授权,不走 session ─
   app.get("/api/dispatch/public/preview", (req, res) => {
     const token = String(req.query.token || "");
+    if (!token) return res.status(401).json({ ok: false, message: "token_invalid_or_expired" });
     const verified = taskStore.verifyConfirmToken(token);
     if (!verified) return res.status(401).json({ ok: false, message: "token_invalid_or_expired" });
     const task = taskStore.getTask(verified.taskId);
@@ -218,6 +217,7 @@ function registerRoutes(app, { requirePermission }) {
     validateBody(publicConfirmBodySchema),
     (req, res) => {
       const token = String(req.query.token || req.body.token || "");
+      if (!token) return res.status(401).json({ ok: false, message: "token_invalid_or_expired" });
       const verified = taskStore.verifyConfirmToken(token);
       if (!verified) return res.status(401).json({ ok: false, message: "token_invalid_or_expired" });
       const responses = req.body.responses || {};
