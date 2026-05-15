@@ -378,7 +378,10 @@ V2 计划剩余：Sentry 自托管（错误告警）+ Grafana 仪表盘一键导
 | `apps/gateway/lib/passwordPolicy.js` | 密码强度 + 弱口令黑名单（V2 · ADR 0013） |
 | `apps/gateway/middleware/auditRequest.js` | 审计中间件（PR7） |
 | `apps/gateway/middleware/validateBody.js` | zod 参数校验（PR6） |
-| `apps/gateway/openapi.yaml` | API 契约（PR10） |
+| `apps/gateway/openapi.yaml` | API 契约 - 手写版默认源（PR10） |
+| `apps/gateway/openapi.generated.yaml` | API 契约 - zod 生成版（PR13，`npm run build:openapi`） |
+| `apps/gateway/scripts/build-openapi.js` | zod schema → OpenAPI 生成器（PR13） |
+| `apps/gateway/schemas/*.js` | zod 输入校验 schema（PR6/PR12，是 OpenAPI 生成的真相源） |
 | `apps/gateway/config/auth.local.json` | 本地账号配置（**不要 commit**）|
 | `runtime/logs/` | 日志滚动目录（gitignore）|
 | `runtime/pids/` | PID 文件（gitignore）|
@@ -424,7 +427,48 @@ V2 计划剩余：Sentry 自托管（错误告警）+ Grafana 仪表盘一键导
 
 新 page 行数目标 < 200。超过先看是不是没用样板。
 
-## 11. 变更历史
+## 11. OpenAPI 维护（手写 + 生成 双源）
+
+详见 `docs/adr/0018-openapi-generation.md`。
+
+### 两份 spec
+
+| 文件 | 谁维护 | 覆盖 |
+|---|---|---|
+| `apps/gateway/openapi.yaml` | 手写（默认） | 11 个端点（含 GET / health / list） |
+| `apps/gateway/openapi.generated.yaml` | `npm run build:openapi` 生成 | 当前 7 个有 zod body schema 的写操作端点 |
+
+`/api/docs` 默认服务手写版；加 `?source=generated` 可看生成版。两份都需 admin cookie。
+
+### 加新端点的工作流
+
+**情况 A：新端点有 body 校验（推荐路径）**
+
+1. 在 `apps/gateway/schemas/<域>.js` 写 zod schema（运行时校验真相）
+2. 在 `apps/gateway/middleware/validateBody.js` 接入到对应路由
+3. 在 `apps/gateway/scripts/build-openapi.js` 末尾 `registry.registerPath({...})` 一次：填 method / path / 引用同一个 schema 作 request.body / 写 200/400 响应描述
+4. 跑 `npm run build:openapi`，把更新后的 `openapi.generated.yaml` 一并 commit
+5. 跑 `npm test` —— `tests/unit/openapi-build.test.js` 会再确认一次
+
+**重点：schema 不要复制到 yaml**。手写版可以先不改；当 generated 版覆盖率 ≥ 手写版时再调换默认。
+
+**情况 B：新端点是 GET / 无 body（如 list / health）**
+
+直接在手写 `openapi.yaml` 加一段；不需要碰 build script。
+
+### 调换默认 source
+
+当生成版完整度更好时，改 `apps/gateway/routes/docs.js` 中 `resolveSource` 的默认从 `manual` 切到 `generated`，一行。
+
+### 故障排查
+
+- **`npm run build:openapi` 报错**：通常是 schema 语法错。脚本会 throw 完整 stack。
+- **Swagger UI 加载空白**：检查 `openapi.generated.yaml` 是否存在；不存在时 `?source=generated` 会自动 fallback 到手写版（不会 500）。
+- **生成 yaml 和 schema 不一致**：忘了重跑 build。CI 推荐加 `npm run build:openapi && git diff --exit-code apps/gateway/openapi.generated.yaml`。
+
+---
+
+## 12. 变更历史
 
 | 日期 | 改动 | 关联 PR |
 |---|---|---|
@@ -432,3 +476,4 @@ V2 计划剩余：Sentry 自托管（错误告警）+ Grafana 仪表盘一键导
 | 2026-04-24 | §6.1 增补 Prometheus scrape + METRICS_TOKEN 配置 | V2 metrics-auth / ADR 0012 |
 | 2026-04-24 | §5.3 补 `ENABLE_PASSWORD_POLICY`，新增 §5.4 账号管理 / 密码策略；§7 索引加 `passwordPolicy.js` | V2 · ADR 0013 |
 | 2026-04-25 | 加"前端开发约定"一节（V3 frontend api layer） | PR-V3 |
+| 2026-04-24 | 加入 OpenAPI 维护章节（zod 自动生成） | PR13 / ADR 0018 |
