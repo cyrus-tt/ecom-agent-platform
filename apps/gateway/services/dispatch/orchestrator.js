@@ -10,6 +10,9 @@ const dingtalk = require("./dingtalk");
 const { cleanDemandRows, findColumns, extractUniqueSkus } = require("./steps/clean");
 const { buildVirtualIndex, buildPhysicalIndex, computeDispatch } = require("./steps/dispatch");
 const { buildDispatchWorkbook, buildMoveCsv } = require("./steps/template");
+const { childLogger } = require("../../lib/logger");
+
+const log = childLogger("dispatch.orchestrator");
 
 const STATES = {
   RECEIVED: "RECEIVED",
@@ -75,7 +78,7 @@ async function startTask({ taskId, title, demandFile, virtualStockFile, physical
   });
   // 异步执行,不阻塞接口
   runTask(taskId).catch((err) => {
-    console.error(`[dispatch] task ${taskId} fatal:`, err);
+    log.error({ taskId, err: err && err.message }, `task ${taskId} fatal: ${err && err.message}`);
   });
   return task;
 }

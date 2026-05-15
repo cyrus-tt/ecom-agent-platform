@@ -1,0 +1,247 @@
+openapi: 3.0.3
+info:
+  title: ecom-agent-platform Gateway API
+  version: 1.0.0
+  description: |
+    Internal gateway for the ecom-agent-platform. Covers daily reporting,
+    dashboards, dispatch Agent, and AI analysis. Used by ~40 users inside
+    the department on LAN.
+
+    Authentication is via session cookie (`anta_sid` by default) obtained
+    from POST /api/auth/login. Every endpoint marked `cookie: sessionAuth`
+    requires a logged-in session.
+
+servers:
+  - url: http://localhost:3000
+    description: Local dev / current production gateway on the Windows host.
+
+components:
+  securitySchemes:
+    sessionAuth:
+      type: apiKey
+      in: cookie
+      name: anta_sid
+
+  schemas:
+    Error:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean, example: false }
+        message: { type: string }
+        issues:
+          type: array
+          description: Populated by zod validation failures only.
+          items:
+            type: object
+            properties:
+              path: { type: string }
+              message: { type: string }
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, maxLength: 128 }
+        password: { type: string, maxLength: 256 }
+        next: { type: string, maxLength: 2048 }
+
+    LoginResponse:
+      type: object
+      properties:
+        ok: { type: boolean, example: true }
+        account_id: { type: string }
+        username: { type: string }
+        name: { type: string }
+        is_admin: { type: boolean }
+        permissions:
+          type: array
+          items: { type: string }
+        preferred_route: { type: string }
+        expires_at: { type: string, format: date-time }
+        next: { type: string }
+
+    AgentRunRequest:
+      type: object
+      required: [period_type]
+      properties:
+        period_type: { type: string, example: "daily" }
+        start_date: { type: string, pattern: "^\\d{4}-\\d{2}-\\d{2}$" }
+        end_date: { type: string, pattern: "^\\d{4}-\\d{2}-\\d{2}$" }
+        skill_id: { type: string }
+        prompt_text: { type: string, maxLength: 4096 }
+
+    Healthz:
+      type: object
+      properties:
+        ok: { type: boolean }
+        service: { type: string }
+        host: { type: string }
+        port: { type: integer }
+        server_time: { type: string, format: date-time }
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      description: Always returns 200 if the process is up. No auth required.
+      security: []
+      responses:
+        "200":
+          description: Alive
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Healthz" }
+
+  /readyz:
+    get:
+      summary: Readiness probe
+      description: 200 if PostgreSQL + arrival + notes are all reachable; 503 otherwise.
+      security: []
+      responses:
+        "200": { description: Ready }
+        "503": { description: One or more dependencies unavailable }
+
+  /api/auth/login:
+    post:
+      summary: Exchange credentials for a session cookie
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Logged in; sets session cookie.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "400":
+          description: Validation error.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: Wrong credentials.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/auth/logout:
+    post:
+      summary: Destroy current session.
+      security:
+        - sessionAuth: []
+      responses:
+        "200": { description: Logged out. }
+
+  /api/auth/me:
+    get:
+      summary: Current session payload.
+      security:
+        - sessionAuth: []
+      responses:
+        "200":
+          description: Session details.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "401": { description: Not logged in. }
+
+  /api/report-daily/dates:
+    get:
+      summary: Available sales dates for the daily report.
+      security:
+        - sessionAuth: []
+      responses:
+        "200":
+          description: Sales-date metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  sales_dates:
+                    type: array
+                    items: { type: string, format: date }
+                  default_sales_date: { type: string, format: date }
+        "403": { description: Missing report_daily / analysis permission. }
+
+  /api/report-daily/meta:
+    get:
+      summary: Aggregated metrics for a sales date (or date range).
+      security:
+        - sessionAuth: []
+      parameters:
+        - in: query
+          name: salesDate
+          schema: { type: string, format: date }
+        - in: query
+          name: dateFrom
+          schema: { type: string, format: date }
+        - in: query
+          name: dateTo
+          schema: { type: string, format: date }
+      responses:
+        "200": { description: Metrics payload. }
+
+  /api/dispatch/tasks:
+    get:
+      summary: List dispatch Agent tasks.
+      security:
+        - sessionAuth: []
+      responses:
+        "200": { description: Task list. }
+        "403": { description: Missing dispatch permission. }
+
+  /api/agent/skills:
+    get:
+      summary: List available analysis skills.
+      security:
+        - sessionAuth: []
+      responses:
+        "200":
+          description: Skill catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  default_skill_id: { type: string }
+                  items:
+                    type: array
+                    items: { type: object }
+
+  /api/agent/run:
+    post:
+      summary: Generate an AI analysis report.
+      description: |
+        Calls DeepSeek via the outbound-metrics guard (`agentService.js`).
+        Saves a record to `anta_daily.analysis_reports`.
+      security:
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentRunRequest" }
+      responses:
+        "200": { description: Report generated or no-data notice. }
+        "400":
+          description: Validation error.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502": { description: Upstream AI service error. }
+
+  /api/admin/accounts:
+    get:
+      summary: List managed accounts (admin only).
+      security:
+        - sessionAuth: []
+      responses:
+        "200": { description: Account list without password hashes. }
+        "403": { description: Not admin. }

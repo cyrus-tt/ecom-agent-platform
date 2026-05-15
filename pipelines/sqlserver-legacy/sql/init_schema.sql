@@ -1,4 +1,4 @@
-﻿IF OBJECT_ID(N'dbo.stg_stock_daily', N'U') IS NULL
+IF OBJECT_ID(N'dbo.stg_stock_daily', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.stg_stock_daily (
         report_week DATE NOT NULL,

@@ -4,6 +4,7 @@ import {
   FundProjectionScreenOutlined,
   HomeOutlined,
   InboxOutlined,
+  LineChartOutlined,
   SettingOutlined,
   ShopOutlined,
   SwapOutlined,
@@ -17,10 +18,18 @@ import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import http from "./api/http";
 import { useAuth } from "./auth/AuthContext";
 import ChangePasswordModal from "./components/ChangePasswordModal";
-import { ADMIN_ACCOUNTS_ROUTE, APP_MODULES, NO_ACCESS_ROUTE, getPreferredRoute, resolveSelectedMenu } from "./auth/modules";
+import {
+  ADMIN_ACCOUNTS_ROUTE,
+  ADMIN_USAGE_ROUTE,
+  APP_MODULES,
+  NO_ACCESS_ROUTE,
+  getPreferredRoute,
+  resolveSelectedMenu,
+} from "./auth/modules";
 import AnalysisPage from "./pages/AnalysisPage";
 import ArrivalPage from "./pages/ArrivalPage";
 import AdminAccountsPage from "./pages/AdminAccountsPage";
+import AdminUsagePage from "./pages/AdminUsagePage";
 import ChannelDashboardPage from "./pages/ChannelDashboardPage";
 import DailyReportPage from "./pages/DailyReportPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -156,6 +165,11 @@ function AppShell() {
       icon: <TeamOutlined />,
       label: <Link to={ADMIN_ACCOUNTS_ROUTE}>账号权限</Link>,
     });
+    menuItems.push({
+      key: ADMIN_USAGE_ROUTE,
+      icon: <LineChartOutlined />,
+      label: <Link to={ADMIN_USAGE_ROUTE}>用量统计</Link>,
+    });
   }
 
   if (loading) {
@@ -285,6 +299,14 @@ function AppShell() {
             element={
               <GuardedElement adminOnly>
                 <AdminAccountsPage />
+              </GuardedElement>
+            }
+          />
+          <Route
+            path={ADMIN_USAGE_ROUTE}
+            element={
+              <GuardedElement adminOnly>
+                <AdminUsagePage />
               </GuardedElement>
             }
           />

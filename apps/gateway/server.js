@@ -17,13 +17,9 @@ const runtimeSecrets = require("./services/runtimeSecrets");
 const toolsModule = require("./services/tools");
 const biQueryService = require("./services/biQueryService");
 const dispatchModule = require("./services/dispatch");
-const passwordPolicy = require("./lib/passwordPolicy");
-const { Semaphore, limitConcurrency } = require("./lib/concurrencyLimit");
-
-// F-PERF-40C §S6: 重操作并发保护，防止 Excel 导出 / AI 报告生成拖垮普通看板访问
-// Excel 4 个 endpoint 共用 ≤2 / AI 报告 ≤1
-const EXCEL_EXPORT_SEMAPHORE = new Semaphore(2, "excel-export");
-const AI_REPORT_SEMAPHORE = new Semaphore(1, "ai-report");
+const { childLogger } = require("./lib/logger");
+const passwordHasher = require("./lib/passwordHasher");
+const log = childLogger("server");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -35,10 +31,13 @@ const PUBLIC_DIR = path.join(BASE_DIR, "public");
 const PROJECT_ROOT = path.resolve(BASE_DIR, "..", "..");
 const WEB_DIST_DIR = process.env.WEB_DIST_DIR || path.join(PROJECT_ROOT, "apps", "web", "dist");
 const WEB_INDEX_PATH = path.join(WEB_DIST_DIR, "index.html");
-const AUTH_CONFIG_DEFAULT_PATH = path.join(BASE_DIR, "config", "auth.json");
-const AUTH_CONFIG_LOCAL_PATH = path.join(BASE_DIR, "config", "auth.local.json");
+const AUTH_CONFIG_DEFAULT_PATH = process.env.AUTH_CONFIG_PATH
+  ? path.resolve(process.env.AUTH_CONFIG_PATH)
+  : path.join(BASE_DIR, "config", "auth.json");
+const AUTH_CONFIG_LOCAL_PATH = process.env.AUTH_CONFIG_LOCAL_PATH
+  ? path.resolve(process.env.AUTH_CONFIG_LOCAL_PATH)
+  : path.join(BASE_DIR, "config", "auth.local.json");
 const AUTH_CONFIG_BACKUP_PATH = path.join(BASE_DIR, "runtime", "auth_config_backup.json");
-const SESSION_FILE_PATH = path.join(BASE_DIR, "runtime", "sessions.json");
 const ARRIVAL_BASE = appConfig.arrivalServiceUrl;
 const NOTES_BASE = appConfig.notesServiceUrl;
 const ARRIVAL_PROJECT_DIR = appConfig.arrivalProjectDir;
@@ -92,29 +91,6 @@ function writeJsonAtomic(filePath, data) {
   fs.renameSync(tmpPath, filePath);
 }
 
-function persistSessions() {
-  const entries = [];
-  for (const [sid, s] of SESSION_STORE.entries()) {
-    entries.push({ sid, account_id: s.account_id, created_at: s.created_at, expires_at: s.expires_at });
-  }
-  try {
-    fs.mkdirSync(path.dirname(SESSION_FILE_PATH), { recursive: true });
-    writeJsonAtomic(SESSION_FILE_PATH, entries);
-  } catch (_) { /* best-effort */ }
-}
-
-function loadPersistedSessions() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(SESSION_FILE_PATH, "utf8"));
-    const now = Date.now();
-    for (const s of raw) {
-      if (s && s.sid && now < Number(s.expires_at || 0)) {
-        SESSION_STORE.set(s.sid, { sid: s.sid, account_id: s.account_id, created_at: s.created_at, expires_at: s.expires_at });
-      }
-    }
-  } catch (_) { /* file missing or corrupt — start fresh */ }
-}
-
 function escapeHtml(text) {
   return String(text || "")
     .replace(/&/g, "&amp;")
@@ -163,15 +139,15 @@ function normalizeAuthAccount(raw, fallbackUsername, fallbackPasswordHash, index
   if (!username || !/^[0-9a-f]{64}$/i.test(passwordHash)) {
     return null;
   }
+  const passwordBcrypt = String(raw.password_bcrypt || "").trim();
   return {
     id,
     name: String(raw.name || raw.display_name || username).trim() || username,
     username,
     password_hash: passwordHash,
+    password_bcrypt: passwordBcrypt,
     is_admin: raw.is_admin !== false,
     permissions: normalizePermissionKeys(raw.permissions, fallbackPermissions),
-    default_channels: Array.isArray(raw.default_channels) ? raw.default_channels.filter((c) => typeof c === "string" && c) : [],
-    default_categories: Array.isArray(raw.default_categories) ? raw.default_categories.filter((c) => typeof c === "string" && c) : [],
   };
 }
 
@@ -379,9 +355,6 @@ function isRouteAllowedForAccount(account, pathname) {
   if (routePath.startsWith("/analysis")) {
     return accountHasPermission(account, "analysis");
   }
-  if (routePath.startsWith("/bi")) {
-    return accountHasPermission(account, "bi");
-  }
   if (routePath.startsWith("/admin/accounts")) {
     return account?.is_admin === true;
   }
@@ -402,10 +375,9 @@ function exportAuthConfig(authStore = getAuthStore()) {
       name: account.name,
       username: account.username,
       password_hash: account.password_hash,
+      password_bcrypt: account.password_bcrypt || "",
       is_admin: account.id === authStore.primary_admin_id,
       permissions: account.id === authStore.primary_admin_id ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account.permissions, []),
-      default_channels: Array.isArray(account.default_channels) ? account.default_channels : [],
-      default_categories: Array.isArray(account.default_categories) ? account.default_categories : [],
     })),
   };
 }
@@ -449,8 +421,6 @@ function sanitizeAccountForClient(account) {
     is_primary_admin: isPrimaryAdminAccount(account.id),
     permissions: account.is_admin === true ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account.permissions, []),
     preferred_route: resolvePreferredRouteForAccount(account),
-    default_channels: Array.isArray(account.default_channels) ? account.default_channels : [],
-    default_categories: Array.isArray(account.default_categories) ? account.default_categories : [],
   };
 }
 
@@ -460,10 +430,9 @@ function cloneAccountForMutation(account) {
     name: account.name,
     username: account.username,
     password_hash: account.password_hash,
+    password_bcrypt: account.password_bcrypt || "",
     is_admin: account.is_admin === true,
     permissions: normalizePermissionKeys(account.permissions, []),
-    default_channels: Array.isArray(account.default_channels) ? [...account.default_channels] : [],
-    default_categories: Array.isArray(account.default_categories) ? [...account.default_categories] : [],
   };
 }
 
@@ -490,10 +459,6 @@ function validateAccountPassword(password) {
   if (nextPassword.length > 128) {
     throw new Error("password is too long");
   }
-  const policyResult = passwordPolicy.validate(nextPassword);
-  if (!policyResult.ok) {
-    throw new Error(policyResult.reasons.join("；"));
-  }
   return nextPassword;
 }
 
@@ -504,8 +469,11 @@ function updateAuthStore(mutator) {
   return persistAuthStore(buildAuthStore(draft));
 }
 
-function createManagedAccount({ name, password, permissions, default_channels, default_categories }) {
+function createManagedAccount({ name, password, permissions }) {
   const nextPassword = validateAccountPassword(password);
+  const bcryptHash = passwordHasher.isBcryptEnabled()
+    ? passwordHasher.hashForStorage(nextPassword)
+    : "";
   const nextStore = updateAuthStore((draft) => {
     const nextName = validateAccountName(name, draft.accounts);
     draft.accounts.push({
@@ -513,10 +481,9 @@ function createManagedAccount({ name, password, permissions, default_channels, d
       name: nextName,
       username: draft.username,
       password_hash: sha256(nextPassword),
+      password_bcrypt: bcryptHash,
       is_admin: false,
       permissions: normalizePermissionKeys(permissions, []),
-      default_channels: Array.isArray(default_channels) ? default_channels.filter((c) => typeof c === "string" && c) : [],
-      default_categories: Array.isArray(default_categories) ? default_categories.filter((c) => typeof c === "string" && c) : [],
     });
   });
   return nextStore.accounts[nextStore.accounts.length - 1] || null;
@@ -544,22 +511,9 @@ function updateManagedAccountPassword(accountId, password) {
       throw new Error("account not found");
     }
     target.password_hash = sha256(nextPassword);
-  });
-  return getAuthAccountById(accountId);
-}
-
-function updateManagedAccountDefaults(accountId, { default_channels, default_categories }) {
-  updateAuthStore((draft) => {
-    const target = draft.accounts.find((item) => item.id === accountId);
-    if (!target) {
-      throw new Error("account not found");
-    }
-    if (Array.isArray(default_channels)) {
-      target.default_channels = default_channels.filter((c) => typeof c === "string" && c);
-    }
-    if (Array.isArray(default_categories)) {
-      target.default_categories = default_categories.filter((c) => typeof c === "string" && c);
-    }
+    target.password_bcrypt = passwordHasher.isBcryptEnabled()
+      ? passwordHasher.hashForStorage(nextPassword)
+      : "";
   });
   return getAuthAccountById(accountId);
 }
@@ -725,12 +679,11 @@ function cleanupSessions() {
   }
 }
 
-function createSession(account, options = {}) {
+function createSession(account) {
   cleanupSessions();
   const sid = crypto.randomBytes(24).toString("hex");
   const authStore = getAuthStore();
-  const sessionLifetimeMs = options.remember === true ? REMEMBER_ME_MAX_AGE_MS : authStore.session_ttl_seconds * 1000;
-  const expiresAt = Date.now() + sessionLifetimeMs;
+  const expiresAt = Date.now() + authStore.session_ttl_seconds * 1000;
   const session = {
     sid,
     account_id: String(account?.id || ""),
@@ -738,7 +691,6 @@ function createSession(account, options = {}) {
     expires_at: expiresAt,
   };
   SESSION_STORE.set(sid, session);
-  persistSessions();
   return getAuthAccountById(session.account_id)
     ? {
         ...session,
@@ -748,45 +700,62 @@ function createSession(account, options = {}) {
         permissions: account?.is_admin === true ? [...AUTH_PERMISSION_KEYS] : normalizePermissionKeys(account?.permissions, []),
         shared_username: authStore.username,
         preferred_route: resolvePreferredRouteForAccount(account),
-        default_channels: Array.isArray(account?.default_channels) ? account.default_channels : [],
-        default_categories: Array.isArray(account?.default_categories) ? account.default_categories : [],
       }
     : null;
 }
 
 function verifyPasswordHash(password, expectedHex) {
-  const normalizedExpected = String(expectedHex || "").toLowerCase();
-  const providedHex = sha256(String(password || "")).toLowerCase();
-  try {
-    const expected = Buffer.from(normalizedExpected, "hex");
-    const provided = Buffer.from(providedHex, "hex");
-    if (!expected.length || expected.length !== provided.length) {
-      return false;
-    }
-    return crypto.timingSafeEqual(expected, provided);
-  } catch (_err) {
-    return false;
-  }
+  // Legacy SHA256-only helper kept for any callers that still depend on it.
+  // Prefer passwordHasher.verify(password, account) for new code.
+  return passwordHasher.verify(password, { password_hash: expectedHex }).valid;
 }
 
 function findAccountByCredentials(username, password) {
   const normalizedUsername = String(username || "").trim();
   if (!normalizedUsername) {
-    return null;
+    return { account: null, needsUpgrade: false, method: null };
   }
   for (const account of getAuthStore().accounts || []) {
     if (!account || account.username !== normalizedUsername) {
       continue;
     }
-    if (verifyPasswordHash(password, account.password_hash)) {
-      return account;
+    const result = passwordHasher.verify(password, account);
+    if (result.valid) {
+      return { account, needsUpgrade: result.needsUpgrade, method: result.method };
     }
   }
-  return null;
+  return { account: null, needsUpgrade: false, method: null };
+}
+
+function upgradeAccountToBcrypt(accountId, plaintextPassword) {
+  const store = getAuthStore();
+  const next = {
+    ...store,
+    accounts: store.accounts.map((entry) => {
+      if (entry.id !== accountId) return entry;
+      return {
+        ...entry,
+        password_bcrypt: passwordHasher.hashForStorage(plaintextPassword),
+      };
+    }),
+  };
+  try {
+    persistAuthStore(next);
+    log.info({ accountId }, "password auto-upgraded to bcrypt");
+  } catch (err) {
+    log.warn(
+      { accountId, err: err && err.message },
+      `bcrypt auto-upgrade persist failed: ${err && err.message}`
+    );
+  }
 }
 
 function getMatchedAccount(username, password) {
-  return findAccountByCredentials(username, password);
+  const { account, needsUpgrade } = findAccountByCredentials(username, password);
+  if (account && needsUpgrade) {
+    upgradeAccountToBcrypt(account.id, password);
+  }
+  return account;
 }
 
 function getSessionByRequest(req) {
@@ -818,31 +787,18 @@ function getSessionByRequest(req) {
     preferred_route: resolvePreferredRouteForAccount(account),
     created_at: Number(session.created_at || Date.now()),
     expires_at: Number(session.expires_at || 0),
-    default_channels: Array.isArray(account.default_channels) ? account.default_channels : [],
-    default_categories: Array.isArray(account.default_categories) ? account.default_categories : [],
   };
 }
 
-const REMEMBER_ME_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 天
-
-function setSessionCookie(res, sid, options = {}) {
+function setSessionCookie(res, sid) {
   const authStore = getAuthStore();
-  const cookieOptions = {
+  res.cookie(authStore.cookie_name, sid, {
     httpOnly: true,
     sameSite: "lax",
     secure: AUTH_COOKIE_SECURE,
     path: "/",
-  };
-  // remember=true → 30 天免登；remember=false → session-only（关浏览器即失效）；
-  // 未传 remember → 沿用 session_ttl_seconds（兼容旧 setSessionCookie(res, sid) 调用）
-  if (options.remember === true) {
-    cookieOptions.maxAge = REMEMBER_ME_MAX_AGE_MS;
-  } else if (options.remember === false) {
-    // 不设 maxAge / expires → 浏览器视为 session cookie，关闭即失效
-  } else {
-    cookieOptions.maxAge = authStore.session_ttl_seconds * 1000;
-  }
-  res.cookie(authStore.cookie_name, sid, cookieOptions);
+    maxAge: authStore.session_ttl_seconds * 1000,
+  });
 }
 
 function clearSessionCookie(res) {
@@ -889,8 +845,6 @@ function buildAuthMePayload(session) {
     shared_username: session.shared_username || getAuthStore().username,
     preferred_route: session.preferred_route || resolvePreferredRouteForPermissions(session.permissions),
     expires_at: new Date(session.expires_at).toISOString(),
-    default_channels: Array.isArray(session.default_channels) ? session.default_channels : [],
-    default_categories: Array.isArray(session.default_categories) ? session.default_categories : [],
   };
 }
 
@@ -1009,7 +963,7 @@ function appendArrivalServiceLog(streamName, chunk) {
     .filter((line) => line.length > 0);
   lines.forEach((line) => {
     ARRIVAL_SERVICE_LAST_ERROR = line;
-    console.log(`[arrival-service:${streamName}] ${line}`);
+    log.info({ arrivalStream: streamName }, line);
   });
 }
 
@@ -1315,15 +1269,6 @@ function startManagedJob(spec) {
     job.status = job.exit_code === 0 ? "succeeded" : "failed";
     job.ended_at = new Date().toISOString();
     RUNNING_JOB_BY_TYPE.delete(type);
-    // F-PERF-40C §S3: rebuild-weekly 成功完成后自动清缓存，避免用户看到旧数据
-    if (type === "rebuild-weekly" && job.status === "succeeded") {
-      try {
-        const result = reportRepo.clearAllCaches("rebuild-weekly");
-        appendJobLog(job, "system", `[cache] cleared after rebuild: ${JSON.stringify(result.before)}`);
-      } catch (err) {
-        appendJobLog(job, "warn", `[cache] clear failed: ${String(err && err.message ? err.message : err)}`);
-      }
-    }
   });
 
   return { job, reused: false };
@@ -1568,42 +1513,40 @@ app.use((req, _res, next) => {
   next();
 });
 
-app.post("/api/auth/login", express.json({ limit: "256kb" }), (req, res) => {
-  const body = req.body || {};
-  const username = String(body.username || "").trim();
-  const password = String(body.password || "");
-  const remember = body.remember === true;
-  const nextUrl = normalizeNext(body.next);
-  const matchedAccount = getMatchedAccount(username, password);
+// Sentry request handler must come BEFORE all other middleware/routes
+// so it can capture exceptions from anywhere downstream. No-op if
+// SENTRY_DSN is not configured.
+const sentry = require("./lib/sentryClient");
+app.use(sentry.expressRequestHandler());
 
-  if (!matchedAccount) {
-    return res.status(401).json({ ok: false, message: "账号或密码错误" });
-  }
+// Prom-client metrics middleware: records duration + status class per route.
+const { metricsMiddleware } = require("./middleware/metrics");
+app.use(metricsMiddleware());
 
-  const session = createSession(matchedAccount, { remember });
-  setSessionCookie(res, session.sid, { remember });
-  return res.json({
-    ...buildAuthMePayload(session),
-    next: resolvePostLoginRoute(matchedAccount, nextUrl),
-  });
+// Audit every request (after session enrichment, before routes).
+const { createAuditLogger } = require("./services/auditLogger");
+const { auditRequestMiddleware } = require("./middleware/auditRequest");
+const auditLogger = createAuditLogger({
+  getPool: () => reportRepo.getPool(),
 });
+app.use(auditRequestMiddleware(auditLogger));
 
-app.get("/login", (req, res) => {
-  if (req.authUser) {
-    const nextUrl = normalizeNext(req.query.next);
-    return res.redirect(resolvePostLoginRoute(req.authSession, nextUrl));
-  }
-  return res.type("html").send(renderLoginPage(getAuthStore().username));
-});
+// Expose Prometheus scrape endpoint (admin-gated via routes/metrics.js).
+require("./routes/metrics").register(app, { requireAdmin });
 
-app.get("/logout", (req, res) => {
-  const sid = parseCookies(req.headers.cookie)[getAuthStore().cookie_name];
-  if (sid) {
-    SESSION_STORE.delete(sid);
-    persistSessions();
-  }
-  clearSessionCookie(res);
-  res.redirect("/login");
+require("./routes/auth-public").register(app, {
+  express,
+  getAuthStore,
+  getMatchedAccount,
+  createSession,
+  setSessionCookie,
+  clearSessionCookie,
+  SESSION_STORE,
+  parseCookies,
+  buildAuthMePayload,
+  normalizeNext,
+  resolvePostLoginRoute,
+  renderLoginPage,
 });
 
 app.use((req, res, next) => {
@@ -1619,679 +1562,93 @@ app.use((req, res, next) => {
   return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl || "/")}`);
 });
 
-app.post("/api/auth/logout", (req, res) => {
-  const sid = parseCookies(req.headers.cookie)[getAuthStore().cookie_name];
-  if (sid) {
-    SESSION_STORE.delete(sid);
-    persistSessions();
-  }
-  clearSessionCookie(res);
-  res.json({ ok: true });
+require("./routes/auth-session").register(app, {
+  getAuthStore,
+  clearSessionCookie,
+  SESSION_STORE,
+  parseCookies,
+  buildAuthMePayload,
 });
 
-// 用户登录后自助修改密码：旧密 + 新密双因素，成功后强制本会话失效要求重登
-app.post("/api/auth/me/password", express.json({ limit: "256kb" }), (req, res) => {
-  if (!req.authSession) {
-    return res.status(401).json({ ok: false, message: "Unauthorized" });
-  }
-  const body = req.body || {};
-  const oldPassword = String(body.oldPassword || "");
-  const newPassword = String(body.newPassword || "");
-
-  const accountId = req.authSession.account_id;
-  const account = getAuthAccountById(accountId);
-  if (!account) {
-    return res.status(404).json({ ok: false, message: "账号不存在" });
-  }
-  if (!verifyPasswordHash(oldPassword, account.password_hash)) {
-    // 注意：用 400 而非 401，避免前端 axios interceptor 把页面跳回登录页（401 = 未登录场景才用）
-    return res.status(400).json({ ok: false, message: "旧密码不正确" });
-  }
-
-  const policyResult = passwordPolicy.validate(newPassword);
-  if (!policyResult.ok) {
-    return res.status(422).json({
-      ok: false,
-      message: policyResult.reasons.join("；"),
-      reasons: policyResult.reasons,
-    });
-  }
-
-  try {
-    updateManagedAccountPassword(accountId, newPassword);
-  } catch (err) {
-    const message = String(err?.message || err);
-    return res.status(400).json({ ok: false, message });
-  }
-
-  const sid = parseCookies(req.headers.cookie)[getAuthStore().cookie_name];
-  if (sid) {
-    SESSION_STORE.delete(sid);
-    persistSessions();
-  }
-  clearSessionCookie(res);
-
-  return res.json({ ok: true, message: "密码已更新，请重新登录" });
-});
-
-app.get("/api/auth/me", (req, res) => {
-  if (!req.authSession) {
-    return res.status(401).json({ ok: false, message: "Unauthorized" });
-  }
-  return res.json(buildAuthMePayload(req.authSession));
-});
-
-app.get("/api/arrival/note-users", requirePermission("arrival"), (req, res) => {
-  const canViewAllNotes = isPrimaryAdminAccount(req.authSession?.account_id);
-  const currentName = String(req.authSession?.name || "").trim();
-  if (!canViewAllNotes) {
-    return res.json({
-      ok: true,
-      users: currentName
-        ? [
-            {
-              account_id: String(req.authSession?.account_id || "").trim(),
-              name: currentName,
-              is_primary_admin: false,
-            },
-          ]
-        : [],
-    });
-  }
-
-  const seenNames = new Set();
-  const users = [];
-  for (const account of getAuthStore().accounts || []) {
-    const name = String(account?.name || "").trim();
-    if (!name || seenNames.has(name)) {
-      continue;
-    }
-    seenNames.add(name);
-    users.push({
-      account_id: account.id,
-      name,
-      is_primary_admin: isPrimaryAdminAccount(account.id),
-    });
-  }
-
-  if (currentName && !seenNames.has(currentName)) {
-    users.unshift({
-      account_id: String(req.authSession?.account_id || "").trim(),
-      name: currentName,
-      is_primary_admin: req.authSession?.is_admin === true,
-    });
-  }
-
-  return res.json({
-    ok: true,
-    users,
-  });
-});
-
-app.get("/api/admin/accounts", requireAdmin, (_req, res) => {
-  const authStore = getAuthStore();
-  return res.json({
-    ok: true,
-    shared_username: authStore.username,
-    primary_admin_id: authStore.primary_admin_id,
-    modules: AUTH_PERMISSION_MODULES,
-    available_channels: reportRepo.getChannelDashboardAvailableChannels(),
-    accounts: authStore.accounts.map((account) => sanitizeAccountForClient(account)),
-  });
-});
-
-app.post("/api/admin/accounts", requireAdmin, express.json({ limit: "256kb" }), (req, res) => {
-  try {
-    const account = createManagedAccount({
-      name: req.body?.name,
-      password: req.body?.password,
-      permissions: req.body?.permissions,
-      default_channels: req.body?.default_channels,
-      default_categories: req.body?.default_categories,
-    });
-    return res.status(201).json({
-      ok: true,
-      account: sanitizeAccountForClient(account),
-    });
-  } catch (err) {
-    return res.status(400).json({ ok: false, message: String(err?.message || err) });
-  }
-});
-
-app.patch("/api/admin/accounts/:accountId/permissions", requireAdmin, express.json({ limit: "256kb" }), (req, res) => {
-  try {
-    const account = updateManagedAccountPermissions(req.params.accountId, req.body?.permissions);
-    if (!account) {
-      return res.status(404).json({ ok: false, message: "account not found" });
-    }
-    return res.json({
-      ok: true,
-      account: sanitizeAccountForClient(account),
-    });
-  } catch (err) {
-    const message = String(err?.message || err);
-    const status = message === "account not found" ? 404 : 400;
-    return res.status(status).json({ ok: false, message });
-  }
-});
-
-app.patch("/api/admin/accounts/:accountId/password", requireAdmin, express.json({ limit: "256kb" }), (req, res) => {
-  try {
-    const account = updateManagedAccountPassword(req.params.accountId, req.body?.password);
-    if (!account) {
-      return res.status(404).json({ ok: false, message: "account not found" });
-    }
-    return res.json({
-      ok: true,
-      account: sanitizeAccountForClient(account),
-    });
-  } catch (err) {
-    const message = String(err?.message || err);
-    const status = message === "account not found" ? 404 : 400;
-    return res.status(status).json({ ok: false, message });
-  }
-});
-
-app.patch("/api/admin/accounts/:accountId/defaults", requireAdmin, express.json({ limit: "256kb" }), (req, res) => {
-  try {
-    const account = updateManagedAccountDefaults(req.params.accountId, {
-      default_channels: req.body?.default_channels,
-      default_categories: req.body?.default_categories,
-    });
-    if (!account) {
-      return res.status(404).json({ ok: false, message: "account not found" });
-    }
-    return res.json({
-      ok: true,
-      account: sanitizeAccountForClient(account),
-    });
-  } catch (err) {
-    const message = String(err?.message || err);
-    const status = message === "account not found" ? 404 : 400;
-    return res.status(status).json({ ok: false, message });
-  }
-});
-
-app.get("/api/settings/ai", requireAdmin, (_req, res) => {
-  return res.json({
-    ok: true,
-    settings: runtimeSecrets.getDeepseekStatus(),
-  });
-});
-
-app.post("/api/settings/ai/deepseek-key", requireAdmin, express.json({ limit: "128kb" }), (req, res) => {
-  try {
-    const apiKey = String(req.body?.api_key || "").trim();
-    if (!apiKey) {
-      return res.status(400).json({ ok: false, message: "api_key is required" });
-    }
-    const settings = runtimeSecrets.setDeepseekApiKey(apiKey);
-    return res.json({
-      ok: true,
-      settings,
-    });
-  } catch (err) {
-    const message = String(err && err.message ? err.message : err);
-    return res.status(500).json({ ok: false, message });
-  }
-});
-
-app.delete("/api/settings/ai/deepseek-key", requireAdmin, (_req, res) => {
-  const settings = runtimeSecrets.clearDeepseekApiKey();
-  return res.json({
-    ok: true,
-    settings,
-  });
+require("./routes/admin").register(app, {
+  express,
+  requireAdmin,
+  runtimeSecrets,
+  getAuthStore,
+  sanitizeAccountForClient,
+  createManagedAccount,
+  updateManagedAccountPermissions,
+  updateManagedAccountPassword,
+  AUTH_PERMISSION_MODULES,
+  getArrivalAutoStartState,
+  getArrivalServiceStatus,
+  refreshArrivalViaUpstream,
+  startManagedJob,
+  JOB_STORE,
+  ARRIVAL_BASE,
+  ARRIVAL_PROJECT_DIR,
+  PG_PIPELINE_SCRIPT,
+  PROJECT_ROOT,
+  getPool: () => reportRepo.getPool(),
 });
 
 app.use(express.static(PUBLIC_DIR, { index: false, fallthrough: true }));
 app.use(express.static(WEB_DIST_DIR, { index: false, fallthrough: true }));
 
-app.get("/healthz", (_req, res) => {
-  res.json({
-    ok: true,
-    service: "ecom-dashboard-gateway",
-    host,
-    port,
-    server_time: new Date().toISOString(),
-  });
+require("./routes/health").register(app, {
+  host,
+  port,
+  appConfig,
+  getReportDbStatus,
+  getArrivalServiceStatus,
+  getNotesServiceStatus,
+  getAuthStore,
+  getLanIps,
 });
 
-app.get("/readyz", async (_req, res) => {
-  const [reportDb, arrival, notes] = await Promise.all([
-    getReportDbStatus(),
-    getArrivalServiceStatus({ allowAutoStart: false }),
-    getNotesServiceStatus(),
-  ]);
-  const ok = reportDb.ok && arrival.ok && notes.ok;
 
-  res.status(ok ? 200 : 503).json({
-    ok,
-    service: "ecom-dashboard-gateway",
-    host,
-    port,
-    server_time: new Date().toISOString(),
-    dependencies: {
-      report_db: reportDb,
-      arrival: arrival,
-      notes: notes,
-    },
-    config: {
-      arrival_service_url_source: appConfig.arrivalServiceUrlSource,
-      notes_service_url_source: appConfig.notesServiceUrlSource,
-      arrival_project_dir_configured: appConfig.arrivalProjectDirConfigured,
-      arrival_project_dir_source: appConfig.arrivalProjectDirSource,
-      notes_project_dir_configured: appConfig.notesProjectDirConfigured,
-      notes_project_dir_source: appConfig.notesProjectDirSource,
-    },
-  });
+require("./routes/report").register(app, {
+  requirePermission,
+  requireAnyPermission,
+  reportRepo,
+  parsePositiveInt,
+  stampNow,
+  buildGapTemplateWorkbook,
 });
 
-app.get("/api/health", async (_req, res) => {
-  const [reportDb, arrival, notes] = await Promise.all([
-    getReportDbStatus(),
-    getArrivalServiceStatus({ allowAutoStart: false }),
-    getNotesServiceStatus(),
-  ]);
-  const authStore = getAuthStore();
-
-  res.json({
-    ok: reportDb.ok && arrival.ok && notes.ok,
-    service: "ecom-dashboard-gateway",
-    host,
-    port,
-    lan_ips: getLanIps(),
-    server_time: new Date().toISOString(),
-    auth: {
-      cookie_name: authStore.cookie_name,
-      session_ttl_seconds: authStore.session_ttl_seconds,
-    },
-    report_db: {
-      ok: reportDb.ok,
-      message: reportDb.message,
-    },
-    upstream: {
-      arrival: {
-        ok: arrival.ok,
-        status: arrival.status,
-        message: arrival.message,
-        auto_start: arrival.auto_start,
-      },
-      notes: {
-        ok: notes.ok,
-        status: notes.status,
-        message: notes.message,
-      },
-    },
-    config: {
-      arrival_service_url_source: appConfig.arrivalServiceUrlSource,
-      notes_service_url_source: appConfig.notesServiceUrlSource,
-      arrival_project_dir_configured: appConfig.arrivalProjectDirConfigured,
-      notes_project_dir_configured: appConfig.notesProjectDirConfigured,
-    },
-  });
+require("./routes/dashboard").register(app, {
+  requirePermission,
+  reportRepo,
+  parsePositiveInt,
 });
 
-app.get("/api/ping", (req, res) => {
-  res.json({
-    ok: true,
-    message: "pong",
-    user: req.authUser || "",
-    client_ip: req.ip,
-    x_forwarded_for: req.headers["x-forwarded-for"] || "",
-    server_time: new Date().toISOString(),
-  });
+require("./routes/agent").register(app, {
+  express,
+  requirePermission,
+  requireAgentContextAccess,
+  agentSkills,
+  agentService,
+  analysisContextProvider,
+  metricsService,
+  reportRepo,
+  parsePositiveInt,
+  normalizeAgentPeriodType,
 });
 
-app.post("/api/admin/refresh-arrival", requireAdmin, async (req, res) => {
-  try {
-    const autoStartState = getArrivalAutoStartState();
-    if (!autoStartState.ready) {
-      const arrivalStatus = await getArrivalServiceStatus({ allowAutoStart: false });
-      if (!arrivalStatus.ok) {
-        return res.status(503).json({
-          ok: false,
-          message: autoStartState.message,
-          target: ARRIVAL_BASE,
-          auto_start: autoStartState,
-        });
-      }
-      const upstreamRefresh = await refreshArrivalViaUpstream(600000);
-      if (!upstreamRefresh.ok) {
-        return res.status(upstreamRefresh.status || 502).json({
-          ok: false,
-          message: `arrival refresh failed: ${upstreamRefresh.message}`,
-          target: upstreamRefresh.target,
-          upstream: upstreamRefresh.data,
-        });
-      }
-      return res.json({
-        ok: true,
-        mode: "upstream",
-        message: "arrival refresh completed",
-        target: upstreamRefresh.target,
-        upstream: upstreamRefresh.data,
-      });
-    }
-    const result = startManagedJob({
-      type: "refresh-arrival",
-      command: "python",
-      args: ["dashboard_service.py", "--refresh-once"],
-      cwd: ARRIVAL_PROJECT_DIR,
-    });
-    res.json({
-      ok: true,
-      reused: result.reused,
-      job: result.job,
-    });
-  } catch (err) {
-    const message = String(err && err.message ? err.message : err);
-    res.status(500).json({ ok: false, message });
-  }
+require("./routes/arrival").register(app, {
+  express,
+  requirePermission,
+  proxyArrivalRequest,
+  forwardNotesRequest,
+  getAuthStore,
+  isPrimaryAdminAccount,
 });
-
-// F-PERF-40C §S3: admin 手动清缓存入口（运维 / 调试用；rebuild-weekly 完成会自动清，无需手动）
-app.post("/api/admin/cache/clear", requireAdmin, (req, res) => {
-  try {
-    const result = reportRepo.clearAllCaches("admin-manual");
-    res.json({ ok: true, ...result });
-  } catch (err) {
-    const message = String(err && err.message ? err.message : err);
-    res.status(500).json({ ok: false, message });
-  }
-});
-
-app.post("/api/admin/rebuild-weekly", requireAdmin, (req, res) => {
-  try {
-    if (!fs.existsSync(PG_PIPELINE_SCRIPT)) {
-      return res.status(500).json({ ok: false, message: "pipeline script not found" });
-    }
-    const result = startManagedJob({
-      type: "rebuild-weekly",
-      command: "powershell",
-      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", PG_PIPELINE_SCRIPT],
-      cwd: PROJECT_ROOT,
-    });
-    res.json({
-      ok: true,
-      reused: result.reused,
-      job: result.job,
-    });
-  } catch (err) {
-    const message = String(err && err.message ? err.message : err);
-    res.status(500).json({ ok: false, message });
-  }
-});
-
-app.get("/api/admin/jobs/:jobId", requireAdmin, (req, res) => {
-  const jobId = String(req.params.jobId || "");
-  const job = JOB_STORE.get(jobId);
-  if (!job) {
-    return res.status(404).json({ ok: false, message: "job not found" });
-  }
-  return res.json({ ok: true, job });
-});
-
-app.get("/api/report/weeks", requirePermission("report_daily"), async (_req, res, next) => {
-  try {
-    const { weeks, defaultWeek } = await reportRepo.getWeekChoices();
-    res.json({
-      ok: true,
-      weeks,
-      default_week: defaultWeek,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/api/report/meta", requirePermission("report_daily"), async (req, res, next) => {
-  try {
-    const { week, weeks } = await reportRepo.resolveWeek(req.query.week);
-    if (!week) {
-      return res.status(404).json({ ok: false, message: "No report week available." });
-    }
-    const meta = await reportRepo.getReportMeta(week);
-    res.json({
-      ok: true,
-      week,
-      weeks,
-      ...meta,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/api/report/rows", requirePermission("report_daily"), async (req, res, next) => {
-  try {
-    const { week } = await reportRepo.resolveWeek(req.query.week);
-    if (!week) {
-      return res.status(404).json({ ok: false, message: "No report week available." });
-    }
-    const page = parsePositiveInt(req.query.page, 1);
-    const pageSize = Math.min(500, parsePositiveInt(req.query.pageSize, 50));
-    const keyword = String(req.query.keyword || "");
-    const fuzzy = String(req.query.fuzzy || "").trim() === "1";
-    const payload = await reportRepo.getReportRows({ week, page, pageSize, keyword, fuzzy });
-    res.json({
-      ok: true,
-      week,
-      ...payload,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/api/report/export.xlsx", requirePermission("report_daily"), limitConcurrency(EXCEL_EXPORT_SEMAPHORE), async (req, res, next) => {
-  try {
-    const { week } = await reportRepo.resolveWeek(req.query.week);
-    if (!week) {
-      return res.status(404).json({ ok: false, message: "No report week available." });
-    }
-    const meta = await reportRepo.getReportMeta(week);
-    const rows = await reportRepo.getReportExportRows(week);
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([meta.group_headers, meta.column_headers, ...rows]);
-    XLSX.utils.book_append_sheet(wb, ws, "周报主表");
-    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx", compression: true });
-
-    const filename = `周报主表_${week.replace(/-/g, "")}_${stampNow()}.xlsx`;
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
-    res.send(buf);
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/api/report/gap-template.xlsx", requirePermission("report_daily"), limitConcurrency(EXCEL_EXPORT_SEMAPHORE), async (req, res, next) => {
-  try {
-    const { week } = await reportRepo.resolveWeek(req.query.week);
-    if (!week) {
-      return res.status(404).json({ ok: false, message: "No report week available." });
-    }
-    const meta = await reportRepo.getReportMeta(week);
-    const { wb } = buildGapTemplateWorkbook(week, meta.gap_summary || {});
-    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx", compression: true });
-    const filename = `缺口模板_${week.replace(/-/g, "")}_${stampNow()}.xlsx`;
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
-    res.send(buf);
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/api/report-daily/dates", requireAnyPermission(["report_daily", "analysis"]), async (_req, res, next) => {
-  try {
-    const { salesDates, defaultSalesDate } = await reportRepo.getDailyDateChoices();
-    res.json({
-      ok: true,
-      sales_dates: salesDates,
-      default_sales_date: defaultSalesDate,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/api/report-daily/meta", requirePermission("report_daily"), async (req, res, next) => {
-  try {
-    const dateFromRaw = String(req.query.dateFrom || "").trim();
-    const dateToRaw = String(req.query.dateTo || "").trim();
-    if (dateFromRaw || dateToRaw) {
-      const { dateFrom, dateTo, salesDates } = await reportRepo.resolveDailyRange(dateFromRaw, dateToRaw);
-      if (!dateFrom || !dateTo) {
-        return res.status(404).json({ ok: false, message: "No daily report date available." });
-      }
-      const meta = await reportRepo.getDailyRangeMeta({ dateFrom, dateTo });
-      return res.json({
-        ok: true,
-        date_from: dateFrom,
-        date_to: dateTo,
-        sales_dates: salesDates,
-        ...meta,
-      });
-    }
-
-    const { salesDate, salesDates } = await reportRepo.resolveDailyDate(req.query.salesDate);
-    if (!salesDate) {
-      return res.status(404).json({ ok: false, message: "No daily report date available." });
-    }
-    const meta = await reportRepo.getDailyMeta(salesDate);
-    res.json({
-      ok: true,
-      sales_date: salesDate,
-      sales_dates: salesDates,
-      ...meta,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/api/report-daily/rows", requirePermission("report_daily"), async (req, res, next) => {
-  try {
-    const dateFromRaw = String(req.query.dateFrom || "").trim();
-    const dateToRaw = String(req.query.dateTo || "").trim();
-    const page = parsePositiveInt(req.query.page, 1);
-    const pageSize = Math.min(500, parsePositiveInt(req.query.pageSize, 50));
-    const keyword = String(req.query.keyword || "");
-    const fuzzy = String(req.query.fuzzy || "").trim() === "1";
-
-    if (dateFromRaw || dateToRaw) {
-      const { dateFrom, dateTo } = await reportRepo.resolveDailyRange(dateFromRaw, dateToRaw);
-      if (!dateFrom || !dateTo) {
-        return res.status(404).json({ ok: false, message: "No daily report date available." });
-      }
-      const payload = await reportRepo.getDailyRowsRange({ dateFrom, dateTo, page, pageSize, keyword, fuzzy });
-      return res.json({
-        ok: true,
-        date_from: dateFrom,
-        date_to: dateTo,
-        ...payload,
-      });
-    }
-
-    const { salesDate } = await reportRepo.resolveDailyDate(req.query.salesDate);
-    if (!salesDate) {
-      return res.status(404).json({ ok: false, message: "No daily report date available." });
-    }
-    const payload = await reportRepo.getDailyRows({ salesDate, page, pageSize, keyword, fuzzy });
-    res.json({
-      ok: true,
-      sales_date: salesDate,
-      ...payload,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-async function sendDailyExport(req, res, next, options) {
-  const bookType = String(options?.bookType || "xlsx");
-  const ext = String(options?.ext || "xlsx");
-  const contentType =
-    String(options?.contentType || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-
-  try {
-    const dateFromRaw = String(req.query.dateFrom || "").trim();
-    const dateToRaw = String(req.query.dateTo || "").trim();
-
-    if (dateFromRaw || dateToRaw) {
-      const { dateFrom, dateTo } = await reportRepo.resolveDailyRange(dateFromRaw, dateToRaw);
-      if (!dateFrom || !dateTo) {
-        return res.status(404).json({ ok: false, message: "No daily report date available." });
-      }
-      const meta = await reportRepo.getDailyRangeMeta({ dateFrom, dateTo });
-      const rows = await reportRepo.getDailyExportRowsRange({ dateFrom, dateTo });
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.aoa_to_sheet([meta.group_headers, meta.column_headers, ...rows]);
-      XLSX.utils.book_append_sheet(wb, ws, "日报主表");
-      const buf = XLSX.write(wb, { type: "buffer", bookType, compression: true });
-      const filename = `日报主表_${dateFrom.replace(/-/g, "")}_${dateTo.replace(/-/g, "")}_${stampNow()}.${ext}`;
-      res.setHeader("Content-Type", contentType);
-      res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
-      return res.send(buf);
-    }
-
-    const { salesDate } = await reportRepo.resolveDailyDate(req.query.salesDate);
-    if (!salesDate) {
-      return res.status(404).json({ ok: false, message: "No daily report date available." });
-    }
-    const meta = await reportRepo.getDailyMeta(salesDate);
-    const rows = await reportRepo.getDailyExportRows(salesDate);
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([meta.group_headers, meta.column_headers, ...rows]);
-    XLSX.utils.book_append_sheet(wb, ws, "日报主表");
-    const buf = XLSX.write(wb, { type: "buffer", bookType, compression: true });
-
-    const filename = `日报主表_${salesDate.replace(/-/g, "")}_${stampNow()}.${ext}`;
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
-    return res.send(buf);
-  } catch (err) {
-    next(err);
-    return null;
-  }
-}
-
-app.get("/api/report-daily/export.xlsx", requirePermission("report_daily"), limitConcurrency(EXCEL_EXPORT_SEMAPHORE), async (req, res, next) => {
-  await sendDailyExport(req, res, next, {
-    bookType: "xlsx",
-    ext: "xlsx",
-    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  });
-});
-
-app.get("/api/report-daily/export.xlsb", requirePermission("report_daily"), limitConcurrency(EXCEL_EXPORT_SEMAPHORE), async (req, res, next) => {
-  await sendDailyExport(req, res, next, {
-    bookType: "xlsb",
-    ext: "xlsb",
-    contentType: "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
-  });
-});
-
-function parseDashboardFilter(query) {
-  const channelCodes = String(query.channels || "").trim()
-    ? String(query.channels).split(",").map((c) => c.trim()).filter(Boolean)
-    : [];
-  const majorCategory = String(query.major_category || "").trim() || "";
-  const category = String(query.category || "").trim() || "";
-  return { channelCodes, majorCategory, category };
-}
-
-// ── ChatBI endpoints ──
 
 app.get("/api/bi/datasets", requirePermission("bi"), (_req, res) => {
   res.json({ ok: true, datasets: Object.values(biQueryService.PRESET_DATASETS) });
 });
 
-app.post("/api/bi/dataset", requirePermission("bi"), express.json({ limit: "64kb" }), async (req, res) => {
+app.post("/api/bi/dataset", requirePermission("bi"), express.json({ limit: "64kb" }), async (req, res, next) => {
   try {
     const key = String(req.body?.key || "").trim();
     const dateFrom = String(req.body?.date_from || "").trim();
@@ -2299,7 +1656,7 @@ app.post("/api/bi/dataset", requirePermission("bi"), express.json({ limit: "64kb
     const result = await biQueryService.queryPresetDataset(key, dateFrom, dateTo);
     res.json({ ok: true, ...result });
   } catch (err) {
-    res.status(400).json({ ok: false, message: String(err?.message || err) });
+    next(err);
   }
 });
 
@@ -2308,27 +1665,31 @@ app.get("/api/bi/templates", requirePermission("bi"), (req, res) => {
   res.json({ ok: true, templates: biQueryService.getTemplatesByAccount(accountId) });
 });
 
-app.post("/api/bi/templates", requirePermission("bi"), express.json({ limit: "64kb" }), (req, res) => {
+app.post("/api/bi/templates", requirePermission("bi"), express.json({ limit: "64kb" }), (req, res, next) => {
   try {
     const accountId = String(req.authSession?.account_id || "");
     const tpl = biQueryService.saveTemplate(accountId, {
       name: req.body?.name,
       dataset_key: req.body?.dataset_key,
-      pivotState: req.body?.pivotState,
+      rows: req.body?.rows,
+      cols: req.body?.cols,
+      vals: req.body?.vals,
+      aggregatorName: req.body?.aggregatorName,
+      rendererName: req.body?.rendererName,
     });
-    res.status(201).json({ ok: true, template: tpl });
+    res.json({ ok: true, template: tpl });
   } catch (err) {
-    res.status(400).json({ ok: false, message: String(err?.message || err) });
+    next(err);
   }
 });
 
-app.delete("/api/bi/templates/:id", requirePermission("bi"), (req, res) => {
+app.delete("/api/bi/templates/:id", requirePermission("bi"), (req, res, next) => {
   try {
     const accountId = String(req.authSession?.account_id || "");
     biQueryService.deleteTemplate(accountId, req.params.id);
     res.json({ ok: true });
   } catch (err) {
-    res.status(400).json({ ok: false, message: String(err?.message || err) });
+    next(err);
   }
 });
 
@@ -2341,458 +1702,78 @@ app.get("/api/bi/schema", requirePermission("bi"), async (_req, res, next) => {
   }
 });
 
-app.post("/api/bi/query", requirePermission("bi"), express.json({ limit: "64kb" }), async (req, res) => {
+app.post("/api/bi/query", requirePermission("bi"), express.json({ limit: "64kb" }), async (req, res, next) => {
   try {
     const sql = String(req.body?.sql || "").trim();
     const result = await biQueryService.executeBiQuery(sql);
     res.json({ ok: true, ...result });
   } catch (err) {
-    const message = String(err?.message || err);
-    const isTimeout = message.includes("timeout") || message.includes("cancel");
-    res.status(isTimeout ? 504 : 400).json({ ok: false, message });
+    next(err);
   }
 });
 
-app.post("/api/bi/ask", requirePermission("bi"), express.json({ limit: "64kb" }), async (req, res) => {
+app.post("/api/bi/ask", requirePermission("bi"), express.json({ limit: "64kb" }), async (req, res, next) => {
   const question = String(req.body?.question || "").trim();
   if (!question) {
-    return res.status(400).json({ ok: false, message: "question is required" });
-  }
-  const apiKey = runtimeSecrets.getDeepseekApiKey();
-  if (!apiKey) {
-    return res.status(503).json({ ok: false, message: "AI 服务未配置 API Key" });
+    return res.status(400).json({ ok: false, message: "question required" });
   }
   try {
     const { OpenAI } = require("openai");
+    const apiKey = runtimeSecrets.getDeepseekApiKey();
+    if (!apiKey) {
+      return res.status(400).json({ ok: false, message: "请先在 AI 设置中填写 DeepSeek API Key" });
+    }
     const schema = await biQueryService.getSchemaInfo();
     const schemaText = biQueryService.buildSchemaPromptText(schema);
     const client = new OpenAI({
       apiKey,
-      baseURL: String(process.env.DEEPSEEK_BASE_URL || runtimeSecrets.DEFAULT_DEEPSEEK_BASE_URL),
+      baseURL: appConfig.deepseekBaseUrl,
     });
-    const systemPrompt = [
-      "你是安踏电商数据库 SQL 专家。用户会用自然语言描述数据需求，你需要生成 PostgreSQL SELECT 查询。",
-      "",
-      "规则：",
+    const prompt = [
+      "你是电商经营数据分析师。请基于给定数据库 schema，把用户问题转换为安全 SQL。",
+      "要求：",
       "1. 只能生成 SELECT 语句（可用 WITH CTE），禁止任何写操作",
       `2. 必须包含 LIMIT（最大 ${biQueryService.MAX_ROWS}）`,
       "3. 所有表都在 anta_daily schema 下，查询时必须加 schema 前缀 anta_daily.",
       "4. 返回 JSON 格式，包含 sql、pivotConfig、title 三个字段",
-      "5. pivotConfig 格式：{ rows: [列名数组], cols: [列名数组], vals: [列名数组], aggregatorName: '聚合方式' }",
-      "6. aggregatorName 可选值：Sum, Count, Average, Maximum, Minimum",
-      "7. 业务术语：出库金额=sales_total_amount, 销量=sales_total_qty, 吊牌价=tag_price, 渠道=各 sales_xxx_qty 列",
+      "5. pivotConfig 使用 react-pivottable 的字段名，rows/cols/vals/aggregatorName/rendererName",
       "",
-      "数据库表结构：",
+      "Schema:",
       schemaText,
       "",
-      "只返回 JSON，不要任何解释文字。",
+      `用户问题：${question}`,
     ].join("\n");
     const completion = await client.chat.completions.create({
-      model: String(process.env.DEEPSEEK_MODEL || runtimeSecrets.DEFAULT_DEEPSEEK_MODEL),
+      model: appConfig.deepseekModel,
+      messages: [{ role: "user", content: prompt }],
       temperature: 0.1,
-      max_tokens: 2000,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: question },
-      ],
-    }, { timeout: 60000 });
-    const raw = String(completion.choices?.[0]?.message?.content || "").trim();
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return res.status(500).json({ ok: false, message: "AI 返回格式异常", raw });
+    });
+    const text = completion.choices?.[0]?.message?.content || "";
+    const parsed = biQueryService.parseAiJson(text);
+    if (!parsed?.sql) {
+      return res.status(502).json({ ok: false, message: "AI 未返回有效 SQL", raw: text });
     }
-    const parsed = JSON.parse(jsonMatch[0]);
-    res.json({
+    const result = await biQueryService.executeBiQuery(parsed.sql);
+    return res.json({
       ok: true,
-      sql: String(parsed.sql || ""),
+      sql: parsed.sql,
+      title: parsed.title || "AI 查询结果",
       pivotConfig: parsed.pivotConfig || {},
-      title: String(parsed.title || ""),
-      model: String(completion.model || ""),
-    });
-  } catch (err) {
-    const message = String(err?.message || err);
-    res.status(500).json({ ok: false, message });
-  }
-});
-
-// ── Dashboard endpoints ──
-
-app.get("/api/dashboard/filter-options", requirePermission("dashboard"), async (_req, res, next) => {
-  try {
-    const channels = reportRepo.getChannelDashboardAvailableChannels();
-    const categories = await reportRepo.getAvailableCategories();
-    res.json({ ok: true, channels, categories });
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/api/dashboard/dates", requirePermission("dashboard"), async (_req, res, next) => {
-  try {
-    const payload = await reportRepo.getDashboardDateChoices();
-    res.json({
-      ok: true,
-      ...payload,
+      ...result,
     });
   } catch (err) {
     next(err);
   }
 });
 
-app.get("/api/dashboard/overview", requirePermission("dashboard"), async (req, res, next) => {
-  try {
-    const anchorDate = String(req.query.anchor_date || "").trim();
-    const dateFrom = String(req.query.date_from || "").trim();
-    const dateTo = String(req.query.date_to || "").trim();
-    const filter = parseDashboardFilter(req.query);
-    const payload = await reportRepo.getDashboardOverview(anchorDate, dateFrom, dateTo, filter);
-    res.json({
-      ok: true,
-      ...payload,
-    });
-  } catch (err) {
-    next(err);
-  }
+require("./routes/spa").register(app, {
+  requirePermission,
+  requireAdmin,
+  sendReactApp,
 });
 
-app.get("/api/dashboard/channel-compare", requirePermission("dashboard"), async (req, res, next) => {
-  try {
-    const dateFrom = String(req.query.date_from || "").trim();
-    const dateTo = String(req.query.date_to || "").trim();
-    const rawChannels = Array.isArray(req.query.channels)
-      ? req.query.channels.join(",")
-      : String(req.query.channels || "").trim();
-    const filter = parseDashboardFilter(req.query);
-    const payload = await reportRepo.getDashboardChannelCompare({
-      dateFromText: dateFrom,
-      dateToText: dateTo,
-      channelCodesText: rawChannels,
-      filter,
-    });
-    res.json({
-      ok: true,
-      ...payload,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/api/dashboard/drilldown", requirePermission("dashboard"), async (req, res, next) => {
-  try {
-    const anchorDate = String(req.query.anchor_date || "").trim();
-    const dateFrom = String(req.query.date_from || "").trim();
-    const dateTo = String(req.query.date_to || "").trim();
-    const category = String(req.query.category || "").trim();
-    const level = String(req.query.level || "").trim().toLowerCase();
-    const style = String(req.query.style || "").trim();
-    const page = parsePositiveInt(req.query.page, 1);
-    const pageSize = Math.min(100, parsePositiveInt(req.query.pageSize, 20));
-
-    if (!category) {
-      return res.status(400).json({ ok: false, message: "category is required" });
-    }
-    if (level !== "style" && level !== "sku") {
-      return res.status(400).json({ ok: false, message: "level must be style or sku" });
-    }
-    if (level === "sku" && !style) {
-      return res.status(400).json({ ok: false, message: "style is required when level=sku" });
-    }
-
-    const filter = parseDashboardFilter(req.query);
-    const payload = await reportRepo.getDashboardDrilldown({
-      anchorDateText: anchorDate,
-      dateFromText: dateFrom,
-      dateToText: dateTo,
-      category,
-      level,
-      style,
-      page,
-      pageSize,
-      channelCodes: filter.channelCodes,
-    });
-    res.json({
-      ok: true,
-      ...payload,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/api/channel-dashboard", requirePermission("channel_dashboard"), async (req, res, next) => {
-  try {
-    const anchorDate = String(req.query.anchor_date || "").trim();
-    const dateFrom = String(req.query.date_from || "").trim();
-    const dateTo = String(req.query.date_to || "").trim();
-    const comparisonDateFrom = String(req.query.comparison_date_from || "").trim();
-    const comparisonDateTo = String(req.query.comparison_date_to || "").trim();
-    const rawChannels = Array.isArray(req.query.channels)
-      ? req.query.channels.join(",")
-      : String(req.query.channels || "").trim();
-    const filter = parseDashboardFilter(req.query);
-    const payload = await reportRepo.getChannelDashboard({
-      anchorDateText: anchorDate,
-      dateFromText: dateFrom,
-      dateToText: dateTo,
-      channelCodesText: rawChannels,
-      comparisonDateFromText: comparisonDateFrom,
-      comparisonDateToText: comparisonDateTo,
-      filter,
-    });
-    res.json({
-      ok: true,
-      ...payload,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/api/channel-dashboard/drilldown", requirePermission("channel_dashboard"), async (req, res, next) => {
-  try {
-    const anchorDate = String(req.query.anchor_date || "").trim();
-    const dateFrom = String(req.query.date_from || "").trim();
-    const dateTo = String(req.query.date_to || "").trim();
-    const channel = String(req.query.channel || "").trim();
-    const style = String(req.query.style || "").trim();
-
-    if (!channel) {
-      return res.status(400).json({ ok: false, message: "channel is required" });
-    }
-    if (!style) {
-      return res.status(400).json({ ok: false, message: "style is required" });
-    }
-
-    const filter = parseDashboardFilter(req.query);
-    const payload = await reportRepo.getChannelDashboardStyleDrilldown({
-      anchorDateText: anchorDate,
-      dateFromText: dateFrom,
-      dateToText: dateTo,
-      channelCode: channel,
-      style,
-      filter,
-    });
-    res.json({
-      ok: true,
-      ...payload,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/api/agent/skills", requirePermission("analysis"), (_req, res) => {
-  res.json({
-    ok: true,
-    default_skill_id: agentSkills.DEFAULT_SKILL_ID,
-    items: agentSkills.listSkills(),
-  });
-});
-
-app.get("/api/agent/context", requireAgentContextAccess, async (req, res, next) => {
-  try {
-    const payload = await analysisContextProvider.getContext({
-      period_type: req.query.period_type,
-      start_date: req.query.start_date,
-      end_date: req.query.end_date,
-    });
-    return res.json(payload);
-  } catch (err) {
-    next(err);
-    return null;
-  }
-});
-
-app.post("/api/agent/run", requirePermission("analysis"), express.json({ limit: "1mb" }), limitConcurrency(AI_REPORT_SEMAPHORE), async (req, res, next) => {
-  try {
-    res.setTimeout(95000);
-    const body = req.body && typeof req.body === "object" ? req.body : {};
-    const periodType = normalizeAgentPeriodType(body.period_type);
-    const startDate = String(body.start_date || "").trim();
-    const endDate = String(body.end_date || "").trim();
-    const skillId = String(body.skill_id || agentSkills.DEFAULT_SKILL_ID).trim();
-    const promptText = String(body.prompt_text || "").trim();
-    const promptConfig = agentSkills.resolveSkillPrompt(skillId, promptText);
-
-    const metrics = await metricsService.calculateMetrics({
-      periodType,
-      startDate,
-      endDate,
-    });
-    if (!metrics.has_data) {
-      return res.status(200).json({
-        ok: false,
-        message: "所选周期没有可用销售数据，请调整日期后重试。",
-      });
-    }
-
-    let reportMd = "";
-    let status = "success";
-    let errorMessage = "";
-    try {
-      const aiResult = await agentService.generateAnalysisReport({
-        metrics,
-        skillId: promptConfig.skill_id,
-        promptText: promptConfig.prompt_text,
-      });
-      reportMd = aiResult.report_md;
-      promptConfig.skill_id = aiResult.skill_id || promptConfig.skill_id;
-      promptConfig.skill_name = aiResult.skill_name || promptConfig.skill_name;
-      promptConfig.prompt_text = aiResult.prompt_text || promptConfig.prompt_text;
-    } catch (err) {
-      status = "error";
-      errorMessage = String(err && err.message ? err.message : err);
-      reportMd = [
-        "## 报告生成失败",
-        "",
-        "本次调用 AI 服务失败，请检查密钥配置或稍后重试。",
-        "",
-        `错误信息：${errorMessage}`,
-      ].join("\n");
-    }
-
-    const saved = await reportRepo.createAnalysisReport({
-      periodType: metrics.period.type,
-      periodStart: metrics.period.start,
-      periodEnd: metrics.period.end,
-      skillId: promptConfig.skill_id,
-      skillName: promptConfig.skill_name,
-      promptText: promptConfig.prompt_text,
-      metricsJson: metrics,
-      reportMd,
-      status,
-      errorMsg: status === "error" ? errorMessage : "",
-    });
-
-    if (status === "error") {
-      return res.status(502).json({
-        ok: false,
-        message: "AI 报告生成失败，错误信息已记录。",
-        report_id: Number(saved?.id || 0),
-        skill_id: promptConfig.skill_id,
-        skill_name: promptConfig.skill_name,
-        prompt_text: promptConfig.prompt_text,
-        created_at: saved?.created_at ? new Date(saved.created_at).toISOString() : new Date().toISOString(),
-      });
-    }
-
-    return res.json({
-      ok: true,
-      report_id: Number(saved?.id || 0),
-      report_md: reportMd,
-      skill_id: promptConfig.skill_id,
-      skill_name: promptConfig.skill_name,
-      prompt_text: promptConfig.prompt_text,
-      metrics_summary: metrics.summary,
-      created_at: saved?.created_at ? new Date(saved.created_at).toISOString() : new Date().toISOString(),
-    });
-  } catch (err) {
-    next(err);
-    return null;
-  }
-});
-
-app.get("/api/agent/reports", requirePermission("analysis"), async (req, res, next) => {
-  try {
-    const page = parsePositiveInt(req.query.page, 1);
-    const pageSize = Math.min(100, parsePositiveInt(req.query.pageSize, 10));
-    const payload = await reportRepo.listAnalysisReports({ page, pageSize });
-    res.json({
-      ok: true,
-      ...payload,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-app.get("/api/agent/reports/:id", requirePermission("analysis"), async (req, res, next) => {
-  try {
-    const report = await reportRepo.getAnalysisReportById(req.params.id);
-    if (!report) {
-      return res.status(404).json({ ok: false, message: "report not found" });
-    }
-    return res.json({
-      ok: true,
-      report,
-    });
-  } catch (err) {
-    next(err);
-    return null;
-  }
-});
-
-app.all(["/api/arrival/status", "/api/arrival/data", "/api/arrival/config", "/api/arrival/review"], requirePermission("arrival"), (req, res) => {
-  proxyArrivalRequest(req, res, { stripPrefix: "/api/arrival", prependPath: "/api" });
-});
-
-app.all("/api/arrival/image/*", (req, res) => {
-  proxyArrivalRequest(req, res, { stripPrefix: "/api/arrival", prependPath: "/api" });
-});
-
-app.all("/api/arrival/refresh", requirePermission("arrival"), (req, res) => {
-  proxyArrivalRequest(req, res, { stripPrefix: "/api/arrival", prependPath: "/api", timeoutMs: 600000 });
-});
-
-app.all(["/api/status", "/api/data", "/api/config", "/api/review"], requirePermission("arrival"), (req, res) => {
-  proxyArrivalRequest(req, res);
-});
-
-app.all("/api/image/*", (req, res) => {
-  proxyArrivalRequest(req, res);
-});
-
-app.all("/api/refresh", requirePermission("arrival"), (req, res) => {
-  proxyArrivalRequest(req, res, { timeoutMs: 600000 });
-});
-
-app.get("/notes-api/*", requirePermission("arrival"), (req, res) => {
-  forwardNotesRequest(req, res);
-});
-
-app.post("/notes-api/*", requirePermission("arrival"), express.json({ limit: "2mb" }), (req, res) => {
-  forwardNotesRequest(req, res);
-});
-
-app.get(["/no-access", "/no-access/"], (_req, res) => {
-  sendReactApp(res);
-});
-
-app.get(["/admin/accounts", "/admin/accounts/"], requireAdmin, (_req, res) => {
-  sendReactApp(res);
-});
-
-app.get("/", requirePermission("portal"), (_req, res) => {
-  sendReactApp(res);
-});
-
-app.get(["/dashboard", "/dashboard/"], requirePermission("dashboard"), (_req, res) => {
-  sendReactApp(res);
-});
-
-app.get(["/channel-dashboard", "/channel-dashboard/"], requirePermission("channel_dashboard"), (_req, res) => {
-  sendReactApp(res);
-});
-
-app.get("/report", requirePermission("report_daily"), (_req, res) => {
-  res.redirect("/report-daily");
-});
-
-app.get(["/report-daily", "/report-daily/"], requirePermission("report_daily"), (_req, res) => {
-  sendReactApp(res);
-});
-
-app.get(["/analysis", "/analysis/"], requirePermission("analysis"), (_req, res) => {
-  sendReactApp(res);
-});
-
-app.get(["/bi", "/bi/"], requirePermission("bi"), (_req, res) => {
-  sendReactApp(res);
-});
-
-app.get(["/arrival", "/arrival/"], requirePermission("arrival"), (_req, res) => {
-  sendReactApp(res);
+require("./routes/docs").register(app, {
+  requireAdmin,
 });
 
 // ── dispatch agent (开关由 DISPATCH_AGENT_ENABLED 控制) ──
@@ -2807,67 +1788,51 @@ if (dispatchModule.isEnabled()) {
   dispatchModule.tryRegister(app, { requirePermission });
 }
 
+// Sentry error handler — runs before our generic handler, reports to DSN
+// if configured. No-op otherwise (errors still reach generic handler).
+app.use(sentry.expressErrorHandler());
+
 app.use((err, _req, res, _next) => {
   const message = String(err && err.message ? err.message : err);
   res.status(500).json({ ok: false, message });
 });
 
 function startServer() {
-  loadPersistedSessions();
   return app.listen(port, host, () => {
     const ips = getLanIps();
     const lanHint = ips.length ? ips.map((ip) => `http://${ip}:${port}`).join(" | ") : "N/A";
-    console.log(`Gateway started on ${host}:${port}`);
-    console.log(`LAN URLs: ${lanHint}`);
+    log.info({ host, port }, `Gateway started on ${host}:${port}`);
+    log.info({ lanHint }, `LAN URLs: ${lanHint}`);
 
     // Warm up default report payload to reduce first-screen latency.
     setTimeout(async () => {
       try {
         const { defaultWeek } = await reportRepo.getWeekChoices();
         if (!defaultWeek) {
-          console.warn("[warmup] report skipped: no default week");
+          log.warn("[warmup] report skipped: no default week");
         } else {
           await reportRepo.getReportMeta(defaultWeek);
           await reportRepo.getReportRows({ week: defaultWeek, page: 1, pageSize: 50, keyword: "" });
-          console.log(`[warmup] report cache ready for ${defaultWeek}`);
+          log.info({ defaultWeek }, `[warmup] report cache ready for ${defaultWeek}`);
         }
       } catch (err) {
         const msg = String(err && err.message ? err.message : err);
-        console.warn(`[warmup] report cache failed: ${msg}`);
+        log.warn({ err: msg }, `[warmup] report cache failed: ${msg}`);
       }
       try {
         const dashboardDates = await reportRepo.getDashboardDateChoices();
         if (!dashboardDates.default_date_from || !dashboardDates.default_date_to) {
-          console.warn("[warmup] dashboard skipped: no default range");
+          log.warn("[warmup] dashboard skipped: no default range");
           return;
         }
         await reportRepo.getDashboardOverview("", dashboardDates.default_date_from, dashboardDates.default_date_to);
-        console.log(`[warmup] dashboard cache ready for ${dashboardDates.default_date_from}~${dashboardDates.default_date_to}`);
-
-        // F-PERF-40C §S7: 扩充预热到 channel-dashboard 默认参数，让早高峰冷查询全部命中预热缓存
-        try {
-          await reportRepo.getChannelDashboard({
-            anchorDateText: dashboardDates.default_date_from,
-            dateFromText: dashboardDates.default_date_from,
-            dateToText: dashboardDates.default_date_to,
-          });
-          console.log(`[warmup] channel-dashboard cache ready for ${dashboardDates.default_date_from}~${dashboardDates.default_date_to}`);
-        } catch (err) {
-          const msg = String(err && err.message ? err.message : err);
-          console.warn(`[warmup] channel-dashboard cache failed: ${msg}`);
-        }
+        log.info(
+          { from: dashboardDates.default_date_from, to: dashboardDates.default_date_to },
+          `[warmup] dashboard cache ready for ${dashboardDates.default_date_from}~${dashboardDates.default_date_to}`
+        );
       } catch (err) {
         const msg = String(err && err.message ? err.message : err);
-        console.warn(`[warmup] dashboard cache failed: ${msg}`);
-      }
-
-      // F-PERF-40C §S7: 预热 daily dates 选项缓存（用户打开日报第一件事就是看可选日期）
-      try {
-        await reportRepo.getDailyDateChoices();
-        console.log(`[warmup] daily-dates cache ready`);
-      } catch (err) {
-        const msg = String(err && err.message ? err.message : err);
-        console.warn(`[warmup] daily-dates cache failed: ${msg}`);
+        log.warn({ err: msg }, `[warmup] dashboard cache failed: ${msg}`);
       }
     }, 200);
   });

@@ -1,4 +1,4 @@
-﻿# ecom-agent-platform
+# ecom-agent-platform
 
 统一入口的电商经营平台工作区。当前项目已经跑通“原始数据入库 -> PostgreSQL 聚合 -> 网关 API -> React 前端展示 -> AI 经营分析”的主闭环，正在从可用的本地经营工作台，逐步演进为可治理、可扩展的企业级 Agent 平台。
 

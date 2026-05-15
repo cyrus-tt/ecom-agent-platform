@@ -10,17 +10,30 @@
     "web:dev": "npm --prefix ../web run dev",
     "web:build": "npm --prefix ../web run build",
     "web:preview": "npm --prefix ../web run preview",
-    "build": "npm run web:build"
+    "build": "npm run web:build",
+    "test": "vitest run --reporter=verbose",
+    "test:watch": "vitest"
   },
   "dependencies": {
+    "@sentry/node": "^8.55.1",
+    "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.5.0",
     "express": "^4.21.2",
+    "js-yaml": "^4.1.1",
     "multer": "^1.4.5-lts.1",
     "openai": "^5.23.2",
     "pg": "^8.20.0",
-    "xlsx": "^0.18.5"
+    "pino": "^9.14.0",
+    "pino-roll": "^3.1.0",
+    "prom-client": "^15.1.3",
+    "swagger-ui-express": "^5.0.1",
+    "xlsx": "^0.18.5",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.2"
+    "@playwright/test": "^1.58.2",
+    "pino-pretty": "^11.3.0",
+    "supertest": "^7.2.2",
+    "vitest": "^2.1.9"
   }
 }

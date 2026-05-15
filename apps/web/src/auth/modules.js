@@ -1,5 +1,6 @@
 export const NO_ACCESS_ROUTE = "/no-access";
 export const ADMIN_ACCOUNTS_ROUTE = "/admin/accounts";
+export const ADMIN_USAGE_ROUTE = "/admin/usage";
 
 export const APP_MODULES = [
   {

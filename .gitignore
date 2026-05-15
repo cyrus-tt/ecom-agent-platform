@@ -17,7 +17,6 @@ runtime/logs/
 runtime/login*.json
 runtime/smoke-last.json
 runtime/tmp-*
-
 .env
 .env.local
 apps/gateway/config/auth.local.backup-*.json
