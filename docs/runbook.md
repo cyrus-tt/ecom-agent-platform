@@ -221,17 +221,54 @@ jq '.accounts[] | {username, has_bcrypt: (.password_bcrypt != "" and .password_b
 
 如果某些账号 `has_bcrypt: false`，说明 TA 从 PR5 上线后还没登录过。V2 清 SHA256 前要催他们登录一次。
 
-### 5.3 应急：关闭 bcrypt / audit / dispatch
+### 5.3 应急：关闭 bcrypt / audit / dispatch / 密码策略
 
 ```bash
 # apps/gateway/.env
-ENABLE_BCRYPT=false          # 回退到纯 SHA256 验证
-ENABLE_AUDIT_LOG=false       # 完全关审计中间件
-ENABLE_AUDIT_DB=false        # 只关 DB 写入，pino 文件仍记录
-DISPATCH_AGENT_ENABLED=false # 关调拨模块
+ENABLE_BCRYPT=false           # 回退到纯 SHA256 验证
+ENABLE_AUDIT_LOG=false        # 完全关审计中间件
+ENABLE_AUDIT_DB=false         # 只关 DB 写入，pino 文件仍记录
+DISPATCH_AGENT_ENABLED=false  # 关调拨模块
+ENABLE_PASSWORD_POLICY=false  # 仅保留长度上限，关强度/黑名单（V2 新增，默认 true）
 ```
 
 改完 `.env` 后必须重启 gateway。
+
+### 5.4 账号管理 / 密码策略（V2 · ADR 0013）
+
+**适用场景**：管理员在 `/admin/accounts` 页面创建账号或重置他人密码。
+**不适用**：普通用户登录（登录路径不做强度校验）。
+
+**默认策略**：
+
+| 规则 | 默认 |
+|---|---|
+| 最小长度 | 8 |
+| 最大长度 | 128（硬闸，关策略也生效） |
+| 必须有小写字母 | 是 |
+| 必须有大写字母 | 是 |
+| 必须有数字 | 是 |
+| 必须有特殊字符 | 否 |
+| 拒绝弱口令黑名单 | 是（26 条内置） |
+
+**失败时前端看到什么**：400 + `issues` 数组，`path="password"`，`message` 是中文原因
+（例：`"密码至少 8 位"`、`"需要包含大写字母"`、`"该密码属于常见弱口令，请更换"`）。
+
+**临时禁用**：
+
+```bash
+# .env
+ENABLE_PASSWORD_POLICY=false   # 或 0 / no / off
+```
+
+重启 gateway 后，只校验长度上限。**存量密码不受任何影响** —— 策略只在"新建/重置"时介入。
+
+**扩展黑名单**：编辑 `apps/gateway/lib/passwordPolicy.js` 里的 `WEAK_PASSWORDS` 数组，
+全部小写。改完跑 `npm test` 验证。
+
+**调整规则（如把 min 提到 12）**：同文件 `DEFAULT_MIN_LENGTH` 常量，改后必须同步更新
+`tests/unit/passwordPolicy.test.js` 和 `tests/smoke/admin-password-policy.smoke.test.js`
+的固定密码。
 
 ---
 
@@ -338,6 +375,7 @@ V2 计划剩余：Sentry 自托管（错误告警）+ Grafana 仪表盘一键导
 | `apps/gateway/services/auditLogger.js` | 审计日志双 sink（PR7 起） |
 | `apps/gateway/lib/logger.js` | pino 集中日志（PR3 起） |
 | `apps/gateway/lib/passwordHasher.js` | bcrypt + SHA256 兼容（PR5 起） |
+| `apps/gateway/lib/passwordPolicy.js` | 密码强度 + 弱口令黑名单（V2 · ADR 0013） |
 | `apps/gateway/middleware/auditRequest.js` | 审计中间件（PR7） |
 | `apps/gateway/middleware/validateBody.js` | zod 参数校验（PR6） |
 | `apps/gateway/openapi.yaml` | API 契约（PR10） |
@@ -376,3 +414,4 @@ V2 计划剩余：Sentry 自托管（错误告警）+ Grafana 仪表盘一键导
 |---|---|---|
 | 2026-04-23 | Runbook 首版 | PR10 |
 | 2026-04-24 | §6.1 增补 Prometheus scrape + METRICS_TOKEN 配置 | V2 metrics-auth / ADR 0012 |
+| 2026-04-24 | §5.3 补 `ENABLE_PASSWORD_POLICY`，新增 §5.4 账号管理 / 密码策略；§7 索引加 `passwordPolicy.js` | V2 · ADR 0013 |
