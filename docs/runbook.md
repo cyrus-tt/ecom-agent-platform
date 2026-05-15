@@ -1,7 +1,7 @@
 # 运维 Runbook
 
 > **为谁写的**：日常运维本系统的同事。出故障时第一眼看这里。
-> **最后更新**：2026-04-24（V2 metrics-auth / ADR 0012）
+> **最后更新**：2026-04-25（V3 frontend api layer）
 > **作者**：Cyrus + Claude
 
 ---
@@ -408,10 +408,27 @@ V2 计划剩余：Sentry 自托管（错误告警）+ Grafana 仪表盘一键导
 
 ---
 
-## 10. 变更历史
+## 10. 前端开发约定（V3 起）
+
+新加 page 必须走"api / hooks / components"三层样板，不允许在 page 内直接 `import http`。详见：
+
+- 设计：`docs/plans/2026-04-25-v3-frontend-api-layer-plan.md`
+- 决策：`docs/adr/0016-frontend-api-layer.md`
+- 样板：`apps/web/src/pages/AdminUsagePage.jsx`（最简单样板）/ `DailyReportPage.jsx`（带分页 + 日期窗口）
+
+3 句话速记：
+
+1. 数据从 `import { reportsApi, errorMessage } from "../api"` 走，不要 `import http`
+2. loading/error/refetch 用 `useApi(fetcher, deps)`；列表分页用 `useTableQuery`；日期窗口用 `useDateRange`
+3. UI 起步用 `<HeroCard><PageHeader title actions /></HeroCard>` + `<DataTable query={tableQuery} />`
+
+新 page 行数目标 < 200。超过先看是不是没用样板。
+
+## 11. 变更历史
 
 | 日期 | 改动 | 关联 PR |
 |---|---|---|
 | 2026-04-23 | Runbook 首版 | PR10 |
 | 2026-04-24 | §6.1 增补 Prometheus scrape + METRICS_TOKEN 配置 | V2 metrics-auth / ADR 0012 |
 | 2026-04-24 | §5.3 补 `ENABLE_PASSWORD_POLICY`，新增 §5.4 账号管理 / 密码策略；§7 索引加 `passwordPolicy.js` | V2 · ADR 0013 |
+| 2026-04-25 | 加"前端开发约定"一节（V3 frontend api layer） | PR-V3 |
