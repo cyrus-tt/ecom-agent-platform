@@ -23,7 +23,13 @@ const { sessionEnrichment } = require("./middleware/sessionEnrichment");
 const { requirePermission, requireAnyPermission } = require("./middleware/requirePermission");
 const { requireAdmin } = require("./middleware/requireAdmin");
 const { requireAgentContextAccess } = require("./middleware/requireAgentContextAccess");
+const { Semaphore, limitConcurrency } = require("./lib/concurrencyLimit");
 const log = childLogger("server");
+
+// F-PERF-40C §S6: 重操作并发保护，防止 Excel 导出 / AI 报告生成拖垮普通看板访问
+// Excel 4 个 endpoint 共用 ≤2 / AI 报告 ≤1
+const EXCEL_EXPORT_SEMAPHORE = new Semaphore(2, "excel-export");
+const AI_REPORT_SEMAPHORE = new Semaphore(1, "ai-report");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -529,6 +535,14 @@ function startManagedJob(spec) {
     job.exit_code = Number.isFinite(code) ? code : -1;
     job.status = job.exit_code === 0 ? "succeeded" : "failed";
     job.ended_at = new Date().toISOString();
+    if (type === "rebuild-weekly" && job.status === "succeeded") {
+      try {
+        const result = reportRepo.clearAllCaches("rebuild-weekly");
+        appendJobLog(job, "system", `[cache] cleared after rebuild: ${JSON.stringify(result.before)}`);
+      } catch (err) {
+        appendJobLog(job, "warn", `[cache] clear failed: ${String(err && err.message ? err.message : err)}`);
+      }
+    }
     RUNNING_JOB_BY_TYPE.delete(type);
   });
 
@@ -812,6 +826,7 @@ require("./routes/auth-session").register(app);
 require("./routes/admin").register(app, {
   express,
   runtimeSecrets,
+  reportRepo,
   getArrivalAutoStartState,
   getArrivalServiceStatus,
   refreshArrivalViaUpstream,
@@ -843,6 +858,7 @@ require("./routes/report").register(app, {
   parsePositiveInt,
   stampNow,
   buildGapTemplateWorkbook,
+  excelExportLimiter: limitConcurrency(EXCEL_EXPORT_SEMAPHORE),
 });
 
 require("./routes/dashboard").register(app, {
@@ -859,6 +875,7 @@ require("./routes/agent").register(app, {
   reportRepo,
   parsePositiveInt,
   normalizeAgentPeriodType,
+  aiReportLimiter: limitConcurrency(AI_REPORT_SEMAPHORE),
 });
 
 require("./routes/arrival").register(app, {

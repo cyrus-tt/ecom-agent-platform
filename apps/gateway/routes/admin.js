@@ -38,6 +38,7 @@ function register(app, ctx) {
   const {
     express,
     runtimeSecrets,
+    reportRepo,
     // ops helpers
     getArrivalAutoStartState,
     getArrivalServiceStatus,
@@ -171,6 +172,16 @@ function register(app, ctx) {
       ok: true,
       settings,
     });
+  });
+
+  app.post("/api/admin/cache/clear", requireAdmin, (_req, res) => {
+    try {
+      const result = reportRepo.clearAllCaches("admin-manual");
+      return res.json({ ok: true, ...result });
+    } catch (err) {
+      const message = String(err && err.message ? err.message : err);
+      return res.status(500).json({ ok: false, message });
+    }
   });
 
   // ── data refresh / rebuild jobs ────────────────────────────────────

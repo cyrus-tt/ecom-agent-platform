@@ -57,7 +57,7 @@ export default function ChangePasswordModal({ open, onCancel }) {
       okText="确定"
       cancelText="取消"
       confirmLoading={loading}
-      destroyOnClose
+      destroyOnHidden
     >
       <Form form={form} layout="vertical" preserve={false}>
         <Form.Item

@@ -57,7 +57,10 @@ const MODULE_ICON_MAP = {
 function LoadingScreen() {
   return (
     <div className="settings-loading">
-      <Spin tip="正在加载账号信息..." />
+      <Space direction="vertical" align="center" size={10}>
+        <Spin />
+        <Text type="secondary">正在加载账号信息...</Text>
+      </Space>
     </div>
   );
 }

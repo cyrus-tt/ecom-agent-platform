@@ -26,6 +26,7 @@ function register(app, ctx) {
     reportRepo,
     parsePositiveInt,
     normalizeAgentPeriodType,
+    aiReportLimiter = (_req, _res, next) => next(),
   } = ctx;
 
   app.get("/api/agent/skills", requirePermission("analysis"), (_req, res) => {
@@ -54,6 +55,7 @@ function register(app, ctx) {
     "/api/agent/run",
     requirePermission("analysis"),
     express.json({ limit: "1mb" }),
+    aiReportLimiter,
     validateBody(runBodySchema),
     async (req, res, next) => {
       try {

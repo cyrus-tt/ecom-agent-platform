@@ -19,6 +19,7 @@ function register(app, ctx) {
     parsePositiveInt,
     stampNow,
     buildGapTemplateWorkbook,
+    excelExportLimiter = (_req, _res, next) => next(),
   } = ctx;
 
   // ── Weekly report ──────────────────────────────────────────────────
@@ -75,7 +76,7 @@ function register(app, ctx) {
     }
   });
 
-  app.get("/api/report/export.xlsx", requirePermission("report_daily"), async (req, res, next) => {
+  app.get("/api/report/export.xlsx", requirePermission("report_daily"), excelExportLimiter, async (req, res, next) => {
     try {
       const { week } = await reportRepo.resolveWeek(req.query.week);
       if (!week) {
@@ -98,23 +99,29 @@ function register(app, ctx) {
     }
   });
 
-  app.get("/api/report/gap-template.xlsx", requirePermission("report_daily"), async (req, res, next) => {
-    try {
-      const { week } = await reportRepo.resolveWeek(req.query.week);
-      if (!week) {
-        return res.status(404).json({ ok: false, message: "No report week available." });
+  app.get(
+    "/api/report/gap-template.xlsx",
+    requirePermission("report_daily"),
+    excelExportLimiter,
+    async (req, res, next) => {
+      try {
+        const { week } = await reportRepo.resolveWeek(req.query.week);
+        if (!week) {
+          return res.status(404).json({ ok: false, message: "No report week available." });
+        }
+        const meta = await reportRepo.getReportMeta(week);
+        const { wb } = buildGapTemplateWorkbook(week, meta.gap_summary || {});
+        const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx", compression: true });
+        const filename = `缺口模板_${week.replace(/-/g, "")}_${stampNow()}.xlsx`;
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+        return res.send(buf);
+      } catch (err) {
+        next(err);
+        return null;
       }
-      const meta = await reportRepo.getReportMeta(week);
-      const { wb } = buildGapTemplateWorkbook(week, meta.gap_summary || {});
-      const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx", compression: true });
-      const filename = `缺口模板_${week.replace(/-/g, "")}_${stampNow()}.xlsx`;
-      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
-      res.send(buf);
-    } catch (err) {
-      next(err);
     }
-  });
+  );
 
   // ── Daily report ───────────────────────────────────────────────────
 
@@ -257,7 +264,7 @@ function register(app, ctx) {
     }
   }
 
-  app.get("/api/report-daily/export.xlsx", requirePermission("report_daily"), async (req, res, next) => {
+  app.get("/api/report-daily/export.xlsx", requirePermission("report_daily"), excelExportLimiter, async (req, res, next) => {
     await sendDailyExport(req, res, next, {
       bookType: "xlsx",
       ext: "xlsx",
@@ -265,7 +272,7 @@ function register(app, ctx) {
     });
   });
 
-  app.get("/api/report-daily/export.xlsb", requirePermission("report_daily"), async (req, res, next) => {
+  app.get("/api/report-daily/export.xlsb", requirePermission("report_daily"), excelExportLimiter, async (req, res, next) => {
     await sendDailyExport(req, res, next, {
       bookType: "xlsb",
       ext: "xlsb",
