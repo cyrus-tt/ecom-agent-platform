@@ -884,6 +884,11 @@ require("./routes/streaming-agent").register(app, {
   aiReportLimiter: limitConcurrency(AI_REPORT_SEMAPHORE),
 });
 
+require("./routes/report-export").register(app, {
+  express,
+  excelExportLimiter: limitConcurrency(EXCEL_EXPORT_SEMAPHORE),
+});
+
 require("./routes/arrival").register(app, {
   express,
   proxyArrivalRequest,
