@@ -3,7 +3,7 @@
 **PROGRESS 编号**：F-AGENT-REPORT
 **创建于**：2026-05-16
 **Deadline**：—（按步骤分批交付）
-**状态**：🟡 approved（2026-05-16 Cyrus 确认）
+**状态**：🔵 in-progress（2026-05-16 Mac 端开发完成，待 Windows 验收）
 
 ---
 
@@ -229,14 +229,8 @@ Cyrus（2026-05-16）提出：
 
 ## 执行日志（动手后追加）
 
-<!-- 
-- YYYY-MM-DD HH:MM — 开始（状态切到 🔵 in-progress）
-- YYYY-MM-DD HH:MM — S1 完成：3 个新工具 + build_report
-- YYYY-MM-DD HH:MM — S2+S3 完成：Report Schema + excelBuilder
-- YYYY-MM-DD HH:MM — S4 完成：Univer 集成
-- YYYY-MM-DD HH:MM — S5 完成：AnalysisPage 改造
-- YYYY-MM-DD HH:MM — S6 完成：模板系统
-- YYYY-MM-DD HH:MM — S7 完成：测试 + ADR
-- YYYY-MM-DD HH:MM — Mac 端测试全绿
-- YYYY-MM-DD HH:MM — push origin，请 Cyrus 验收
--->
+- 2026-05-16 08:20 — S1+S3+S4 并行开发（3 个 Agent worktree），230 tests 全绿
+- 2026-05-16 08:30 — S5+S6 完成：AnalysisPage 集成 + 模板系统
+- 2026-05-16 08:32 — S7 完成：ADR-0023
+- 2026-05-16 08:33 — Mac 端 230/230 tests 全绿
+- 2026-05-16 08:33 — push origin codex/mac/feat-agent-report，请 Cyrus 验收
