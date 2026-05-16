@@ -2,7 +2,7 @@
 
 > **用途**：跟踪当前开发任务、本周焦点、进行中风险。
 > **维护**：每个任务状态变化时同步；每周一刷新"本周焦点"。
-> **最后更新**：2026-05-07
+> **最后更新**：2026-05-16
 
 ---
 
@@ -12,24 +12,23 @@
 > **维护**：每周一整理——完成的从这里删（不删下面详表里的 ✅ 记录），新进行中的从详表挪上来。
 > **过期保护**：若下方"索引日期"距今 > 7 天，视为失效，Claude 必须回去扫详细表。
 >
-> **索引日期**：2026-05-07（周四）　**本周窗口**：5/5–5/11
+> **索引日期**：2026-05-16（周六）　**本周窗口**：5/16–5/22
 
 ### 主线（按优先级）
 
 | # | 任务 | 当前状态 | 一句话 |
 |---|------|---------|--------|
-| ① | **F-PERF-40C** 40 并发性能加固 | ✅ done（5/7 Windows 验收通过） | 缓存清理 / PG 池 25 / ETL ANALYZE / 重操作并发 / 预热 / repo 清理 + 40 并发压测 |
-| ② | **F-LOGIN** 登录自助改密 + 记住我 30 天 | ✅ done（5/7 Windows 验收通过） | 登录页 30 天免登录 + 忘记密码联系 Cyrus + 右上角自助改密 |
-| ③ | **F-DASH-FILTER** 看板渠道+品类筛选基础设施 | 🔵 in-progress（5/7 Mac 端完成，待 Windows 验收） | 渠道/品类筛选 + Admin 默认渠道 + Dashboard/ChannelDashboard UI |
-| ④ | **F-CHATBI** 内置 ChatBI 透视表 | 🔵 in-progress（5/7 Mac 端完成，待 Windows 验收） | AI 生成 SQL + react-pivottable + PG 只读用户 |
-| ⑤ | **F-CHANNEL-TOP20** 渠道 Top 20 板块业务逻辑调整 | ⚪ 暂搁置 | 待启动 brainstorm |
+| ① | **GitHub main 统一基线** | ✅ done（5/16） | 本地 `main` 与 `origin/main` 同步到 `b23ce7d`，所有本地/远端开发分支均已包含进 main |
+| ② | **历史功能分支整合** | ✅ done（5/16） | PR1-12、V2/V3、F-LOGIN、F-PERF、F-CHATBI、调拨、小工具等历史改动已进入 main |
+| ③ | **Mac mini 大升级准备** | 🟢 ready | 在 Mac mini 从 GitHub 最新 `main` 拉取后，新开独立升级分支开发 |
+| ④ | **F-CHANNEL-TOP20** 渠道 Top 20 板块业务逻辑调整 | ⚪ 暂搁置 | 大升级规划时重新评估优先级 |
 | ~~⑤~~ | ~~**F-OUTBOUND-RENAME** GMV → 出库金额~~ | ⚪ **取消** | 不做 |
-| ⑥ | **审 + 合 PR1-12 + V2/V3** 历史 7→9 改造交付 | 🟡 待 Cyrus 审 | 见 `docs/plans/2026-04-24-pr-review-guide.md` |
 
 ### 🚨 进行中风险登记（每次开工必看）
 
 | # | 风险 | 触发条件 | 防御 | 登记日 |
 |---|---|---|---|---|
+| **R0** | **大升级再次污染 main** | 在已有杂分支上继续开发或直接推 main | Mac mini 必须基于 GitHub 最新 `main` 新开独立分支；每个阶段小步提交、先测后合 | 2026-05-16 |
 | **R1** | **密码哈希仍用 SHA256（未升 bcrypt）** | 公司账号被撞库 / 数据泄露 | 历史短板，作为后续 PR 单独处理；本次 F-LOGIN 不动以减小爆炸半径 | 2026-04-28 |
 | **R2** | **30 天 cookie 在共享电脑是隐患** | 用户在网吧/共享机勾"记住我" | login.html 文案显式提示"仅私人电脑勾选" | 2026-04-28 |
 | **R3** | **V2 password-policy 还没整体合入 uplift-design** | F-LOGIN 想用强密码校验 | 仅 cherry-pick `passwordPolicy.js` 单文件，不动 schemas/admin.js（避免与 v2 分支后续合并冲突） | 2026-04-28 |
@@ -55,6 +54,20 @@
 ---
 
 ## 📋 历史里程碑
+
+### 2026-05-16：GitHub main 统一与升级基线确认
+
+- 本地 `main` 与 GitHub `origin/main` 同步到 `b23ce7d`
+- `origin` 上 25 个非 main 远端分支均已确认包含进 `main`
+- 本地非 main 分支 `codex/add-tools-module`、`codex/integrate-all-main` 均已确认包含进 `main`
+- 未删除任何本地或远端分支；仅完成合并、验证与 main 推送
+- 验证记录：
+  - gateway 运行时代码 `node --check` 通过
+  - gateway Vitest/Supertest 分组测试共 203 条通过
+  - web `test:tools` 通过
+  - web production build 通过
+- 保留项：本机仍有 `stash@{0}`，仅包含 `data/`、`runtime/` 运行数据保护快照，不影响 GitHub 或 Mac mini 拉取
+- 下一步：Mac mini 从 GitHub 最新 `main` 拉取，新开独立分支承接大升级
 
 ### 2026-04-23 ~ 2026-04-25：7→9 加固三轮交付（已 push origin）
 
