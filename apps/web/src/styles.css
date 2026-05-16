@@ -688,12 +688,26 @@ body {
   line-height: 1.6;
 }
 
+.chat-welcome-section {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--chat-text-muted);
+  margin: 24px auto 12px;
+  max-width: 560px;
+  text-align: left;
+}
+
 .chat-quick-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   max-width: 560px;
   margin: 0 auto;
+}
+
+.chat-quick-btn-report {
+  border-color: var(--chat-accent, #4e7be9);
+  background: rgba(78, 123, 233, 0.04);
 }
 
 .chat-quick-btn {

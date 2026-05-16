@@ -1,13 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import ConversationSidebar from "../components/ConversationSidebar";
 import ReportDrawer from "../components/ReportDrawer";
 import useConversations from "../hooks/useConversations";
+
+const ReportPreview = lazy(() => import("../components/ReportPreview"));
 
 const QUICK_PROMPTS = [
   { icon: "chart", label: "本周销额复盘", prompt: "帮我分析一下本周销额变化的原因，对比上一周。" },
   { icon: "target", label: "品类结构分析", prompt: "分析最近一周各品类的销售结构，找出贡献最高和下滑最大的品类。" },
   { icon: "alert", label: "销售异常归因", prompt: "最近三天销售有没有异常波动？请定位可能的异常点和原因。" },
   { icon: "event", label: "近期活动效果", prompt: "帮我看最近一次大促活动的表现：GMV、流量、转化、ROI。" },
+];
+
+const REPORT_TEMPLATES = [
+  { icon: "📊", label: "日报 · 渠道销售汇总", prompt: "生成今天各渠道的销售汇总报表，包含销售额、销量、同比变化，按销售额降序排列。请用 build_report 工具输出可导出的表格。" },
+  { icon: "📈", label: "周报 · 品类对比", prompt: "生成本周 vs 上周的品类销售对比报表，包含销售额、销量、同比变化率，按变化率排序。请用 build_report 工具输出可导出的表格。" },
+  { icon: "🏪", label: "渠道 Top 20 款", prompt: "生成各主要渠道 Top 20 畅销款的明细报表，包含款号、品类、销售额、销量、折扣率。请用 build_report 工具输出可导出的表格。" },
 ];
 
 function parseSSEChunk(buffer) {
@@ -129,6 +137,7 @@ export default function AnalysisPage() {
         trace: [],
         summary: "",
         reportId: null,
+        reportSchema: null,
         errorMessage: "",
       };
 
@@ -191,6 +200,9 @@ export default function AnalysisPage() {
               statusLine: statusLine ?? message.statusLine,
             }));
 
+            if (event._type === "report_data" && event.data) {
+              patchAgent(() => ({ reportSchema: event.data }));
+            }
             if (event._type === "think:content" && event.is_final && event.content) {
               finalReportMd = event.content;
             }
@@ -341,6 +353,15 @@ function Welcome({ onPick }) {
           </button>
         ))}
       </div>
+      <h2 className="chat-welcome-section">一键生成报表</h2>
+      <div className="chat-quick-grid">
+        {REPORT_TEMPLATES.map((template) => (
+          <button key={template.label} type="button" className="chat-quick-btn chat-quick-btn-report" onClick={() => onPick(template.prompt)}>
+            <span className="chat-quick-icon">{template.icon}</span>
+            <span className="chat-quick-label">{template.label}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -355,8 +376,10 @@ function UserBubble({ message }) {
 
 function AgentBubble({ message, onOpenReport }) {
   const [traceOpen, setTraceOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(true);
   const running = message.status === "running";
   const hasReport = Boolean(message.reportId);
+  const hasReportSchema = Boolean(message.reportSchema);
 
   return (
     <div className="chat-msg chat-msg-agent">
@@ -374,11 +397,22 @@ function AgentBubble({ message, onOpenReport }) {
           <div style={{ color: "#b23a2b" }}>运行失败：{message.errorMessage || "未知错误"}</div>
         ) : null}
 
-        {hasReport || (!running && message.trace?.length > 0) ? (
+        {hasReportSchema && previewOpen ? (
+          <Suspense fallback={<div className="chat-status-line">加载预览组件...</div>}>
+            <ReportPreview reportSchema={message.reportSchema} onClose={() => setPreviewOpen(false)} />
+          </Suspense>
+        ) : null}
+
+        {hasReport || hasReportSchema || (!running && message.trace?.length > 0) ? (
           <div className="chat-bubble-footer">
             {hasReport ? (
               <button type="button" className="chat-action-btn" onClick={onOpenReport}>
                 查看完整报告
+              </button>
+            ) : null}
+            {hasReportSchema && !previewOpen ? (
+              <button type="button" className="chat-action-btn" onClick={() => setPreviewOpen(true)}>
+                显示报表预览
               </button>
             ) : null}
             {message.trace?.length > 0 ? (

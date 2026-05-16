@@ -22,11 +22,17 @@ function register(app, ctx) {
     aiReportLimiter = (_req, _res, next) => next(),
   } = ctx;
 
+  const reportTemplates = require("../config/reportTemplates.json");
+
   app.get("/api/agent/tools", requirePermission("analysis"), (_req, res) => {
     res.json({
       ok: true,
       items: streamingAgent.listTools(),
     });
+  });
+
+  app.get("/api/report/templates", requirePermission("analysis"), (_req, res) => {
+    res.json({ ok: true, items: reportTemplates });
   });
 
   app.get("/api/agent/runs", requirePermission("analysis"), async (req, res, next) => {

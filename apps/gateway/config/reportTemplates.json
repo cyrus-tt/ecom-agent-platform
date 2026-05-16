@@ -1,0 +1,23 @@
+[
+  {
+    "id": "daily-channel-summary",
+    "name": "日报 · 渠道销售汇总",
+    "description": "各渠道当日/本周销售额、销量、同比变化",
+    "prompt": "生成今天各渠道的销售汇总报表，包含销售额、销量、同比变化，按销售额降序排列。请用 build_report 工具输出可导出的表格。",
+    "icon": "BarChartOutlined"
+  },
+  {
+    "id": "weekly-category-comparison",
+    "name": "周报 · 品类对比",
+    "description": "本周 vs 上周品类销售对比",
+    "prompt": "生成本周 vs 上周的品类销售对比报表，包含销售额、销量、同比变化率，按变化率排序。请用 build_report 工具输出可导出的表格。",
+    "icon": "RiseOutlined"
+  },
+  {
+    "id": "channel-top20-styles",
+    "name": "渠道 Top 20 款",
+    "description": "各主要渠道畅销款明细",
+    "prompt": "生成各主要渠道 Top 20 畅销款的明细报表，包含款号、品类、销售额、销量、折扣率。请用 build_report 工具输出可导出的表格。",
+    "icon": "CrownOutlined"
+  }
+]
