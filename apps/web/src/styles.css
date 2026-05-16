@@ -1531,6 +1531,52 @@ body {
   color: var(--brand);
 }
 
+/* ---- ReportPreview: Univer 报表预览 ---- */
+
+.report-preview-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.report-preview-container {
+  position: relative;
+  height: 500px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.report-preview-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.85);
+  z-index: 5;
+}
+
+.report-preview-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 0 0;
+}
+
+.report-preview-fallback-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  font-size: 13px;
+  color: var(--text-1);
+}
+
 @media (max-width: 1024px) {
   .app-header {
     height: auto;
