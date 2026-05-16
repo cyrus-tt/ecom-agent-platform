@@ -38,4 +38,28 @@ describe("smoke: analysis agent endpoints", () => {
     const res = await agent.get("/api/agent/skills").set("Cookie", cookie);
     expect(res.status).toBe(403);
   });
+
+  it("GET /api/agent/tools without cookie returns 401", async () => {
+    const res = await agent.get("/api/agent/tools");
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /api/agent/tools with admin cookie returns aggregate-only tools", async () => {
+    const { cookie } = await login(agent, "smoke-admin", "smoke-pass");
+    const res = await agent.get("/api/agent/tools").set("Cookie", cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(Array.isArray(res.body.items)).toBe(true);
+    expect(res.body.items.length).toBeGreaterThan(0);
+    res.body.items.forEach((tool) => {
+      expect(tool.outbound_data_level).toBe("aggregate_only");
+      expect(String(tool.name)).not.toMatch(/sku|style|product_name|货号|款号|品名/i);
+    });
+  });
+
+  it("GET /api/agent/tools with user lacking analysis permission returns 403", async () => {
+    const { cookie } = await login(agent, "smoke-user", "smoke-user-pass");
+    const res = await agent.get("/api/agent/tools").set("Cookie", cookie);
+    expect(res.status).toBe(403);
+  });
 });

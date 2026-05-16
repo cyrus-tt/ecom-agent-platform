@@ -413,6 +413,11 @@ try {
     }
   }
 
+  $agentRuntimeSql = ".\sql\10_agent_runtime_tables.sql"
+  if (Test-Path $agentRuntimeSql) {
+    Invoke-CheckedCommand -Label "10_agent_runtime_tables.sql" -FilePath $psqlPath -Arguments ($pgArgs + @("-f", $agentRuntimeSql))
+  }
+
   $afterVisibleSkuCount = Get-VisibleSkuCount
   $afterVisibleSkus = @(Get-VisibleSkuList)
   $newVisibleSkus = @()

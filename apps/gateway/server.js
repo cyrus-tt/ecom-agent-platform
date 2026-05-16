@@ -878,6 +878,12 @@ require("./routes/agent").register(app, {
   aiReportLimiter: limitConcurrency(AI_REPORT_SEMAPHORE),
 });
 
+require("./routes/streaming-agent").register(app, {
+  express,
+  parsePositiveInt,
+  aiReportLimiter: limitConcurrency(AI_REPORT_SEMAPHORE),
+});
+
 require("./routes/arrival").register(app, {
   express,
   proxyArrivalRequest,

@@ -1,379 +1,412 @@
-import { Alert, Button, Card, Col, DatePicker, Empty, Input, Radio, Row, Space, Table, Tag, Typography, message } from "antd";
-import dayjs from "dayjs";
-import { useEffect, useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import http from "../api/http";
-import { formatTextOrDash } from "../utils/numbers";
+import { useCallback, useEffect, useRef, useState } from "react";
+import ConversationSidebar from "../components/ConversationSidebar";
+import ReportDrawer from "../components/ReportDrawer";
+import useConversations from "../hooks/useConversations";
 
-const { RangePicker } = DatePicker;
-const { TextArea } = Input;
-const { Title, Text } = Typography;
+const QUICK_PROMPTS = [
+  { icon: "chart", label: "本周销额复盘", prompt: "帮我分析一下本周销额变化的原因，对比上一周。" },
+  { icon: "target", label: "品类结构分析", prompt: "分析最近一周各品类的销售结构，找出贡献最高和下滑最大的品类。" },
+  { icon: "alert", label: "销售异常归因", prompt: "最近三天销售有没有异常波动？请定位可能的异常点和原因。" },
+  { icon: "event", label: "近期活动效果", prompt: "帮我看最近一次大促活动的表现：GMV、流量、转化、ROI。" },
+];
 
-function formatDateTime(text) {
-  if (!text) {
-    return "-";
+function parseSSEChunk(buffer) {
+  const events = [];
+  let index = 0;
+  while (true) {
+    const sep = buffer.indexOf("\n\n", index);
+    if (sep === -1) break;
+    const block = buffer.slice(index, sep);
+    index = sep + 2;
+    if (!block.trim()) continue;
+    let type = "";
+    let data = "";
+    for (const rawLine of block.split("\n")) {
+      const line = rawLine.replace(/\r$/, "");
+      if (line.startsWith("event: ")) type = line.slice(7).trim();
+      else if (line.startsWith("data: ")) data += line.slice(6);
+    }
+    if (!data) continue;
+    try {
+      events.push({ _type: type, ...JSON.parse(data) });
+    } catch (_err) {
+      // Ignore malformed SSE frames.
+    }
   }
-  const date = dayjs(text);
-  return date.isValid() ? date.format("YYYY-MM-DD HH:mm:ss") : "-";
+  return { events, rest: buffer.slice(index) };
 }
 
-function resolveDefaultRange(periodType, latestDate) {
-  if (!latestDate) {
-    return [];
-  }
-  const end = dayjs(latestDate, "YYYY-MM-DD");
-  if (!end.isValid()) {
-    return [];
-  }
-  const days = periodType === "day" ? 1 : periodType === "month" ? 30 : 7;
-  return [end.subtract(days - 1, "day"), end];
+function summarizeReport(reportMd) {
+  if (!reportMd) return "";
+  const clean = String(reportMd)
+    .replace(/```(kpi|chart|table)[\s\S]*?```/g, "")
+    .replace(/^#+\s.*$/gm, "")
+    .replace(/```[\s\S]*?```/g, "")
+    .trim();
+  const firstParagraph = clean.split(/\n\s*\n/).find((paragraph) => paragraph.trim().length > 0) || "";
+  const compact = firstParagraph.replace(/\s+/g, " ").trim();
+  if (compact.length <= 240) return compact;
+  return `${compact.slice(0, 220).replace(/[,，。；;\s]+\S*$/, "")}...`;
 }
 
-function normalizeSkills(items) {
-  return (Array.isArray(items) ? items : [])
-    .map((item) => ({
-      id: String(item?.id || "").trim(),
-      name: String(item?.name || "").trim(),
-      description: String(item?.description || "").trim(),
-      prompt: String(item?.prompt || "").trim(),
-    }))
-    .filter((item) => item.id && item.name);
+function eventToTraceLine(event) {
+  const ts = new Date().toLocaleTimeString("en-GB", { hour12: false });
+  const runId = event.runId || event.run_id || "-";
+  if (event._type === "think:start") return { ts, kind: "think", prefix: "think", msg: `round ${event.round || "?"}` };
+  if (event._type === "think:content") return { ts, kind: "think", prefix: "think", msg: truncate(event.content, 140) };
+  if (event._type === "tool:start") return { ts, kind: "tool", prefix: "tool", msg: `${event.tool || "-"} - ${event.message || "starting"}` };
+  if (event._type === "tool:success") return { ts, kind: "success", prefix: "tool", msg: `${event.tool || "-"} (${event.latency_ms || 0}ms)` };
+  if (event._type === "tool:failed") return { ts, kind: "error", prefix: "tool", msg: `${event.tool || "-"} - ${event.message || "failed"}` };
+  if (event._type === "observe") return { ts, kind: "observe", prefix: "observe", msg: truncate(event.observation, 180) };
+  if (event._type === "step:start") return { ts, kind: "system", prefix: "step", msg: event.step || "-" };
+  if (event._type === "run:start") return { ts, kind: "system", prefix: "run", msg: `started #${runId}` };
+  if (event._type === "run:success") return { ts, kind: "success", prefix: "run", msg: `completed #${runId}` };
+  if (event._type === "run:failed" || event._type === "run:aborted") {
+    return { ts, kind: "error", prefix: "run", msg: event.message || event._type };
+  }
+  return null;
+}
+
+function truncate(text, length) {
+  const value = String(text || "");
+  return value.length > length ? `${value.slice(0, length)}...` : value;
+}
+
+function statusLineFromEvent(event) {
+  if (event._type === "think:start") return "正在思考...";
+  if (event._type === "tool:start") return `正在调用工具：${event.tool}`;
+  if (event._type === "tool:success") return `工具返回：${event.tool}`;
+  if (event._type === "observe") return "正在观察结果...";
+  if (event._type === "step:start") return `开始第 ${event.round || "?"} 轮推理`;
+  return null;
 }
 
 export default function AnalysisPage() {
-  const [periodType, setPeriodType] = useState("week");
-  const [salesDates, setSalesDates] = useState([]);
-  const [range, setRange] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState({ type: "info", text: "请先选择周期和技能后生成报告。" });
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [history, setHistory] = useState([]);
-  const [report, setReport] = useState(null);
-  const [skillsLoading, setSkillsLoading] = useState(false);
-  const [skills, setSkills] = useState([]);
-  const [selectedSkillId, setSelectedSkillId] = useState("");
-  const [promptDrafts, setPromptDrafts] = useState({});
+  const {
+    conversations,
+    activeId,
+    activeConversation,
+    setActiveId,
+    createConversation,
+    deleteConversation,
+    renameConversation,
+    updateConversation,
+  } = useConversations();
+
+  const [input, setInput] = useState("");
+  const [running, setRunning] = useState(false);
+  const [drawerReportId, setDrawerReportId] = useState(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const abortRef = useRef(null);
+  const threadRef = useRef(null);
+  const inputRef = useRef(null);
+
+  const messages = activeConversation?.messages || [];
 
   useEffect(() => {
-    init();
-  }, []);
+    if (threadRef.current) {
+      threadRef.current.scrollTop = threadRef.current.scrollHeight;
+    }
+  }, [messages]);
 
   useEffect(() => {
-    if (!salesDates.length) {
-      return;
-    }
-    setRange(resolveDefaultRange(periodType, salesDates[0]));
-  }, [periodType, salesDates]);
+    return () => {
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, [activeId]);
 
-  const currentSkill = useMemo(
-    () => skills.find((item) => item.id === selectedSkillId) || skills[0] || null,
-    [selectedSkillId, skills]
-  );
+  const sendQuestion = useCallback(
+    async (questionText) => {
+      const question = String(questionText || "").trim();
+      if (!question || running) return;
 
-  const currentPrompt = currentSkill ? promptDrafts[currentSkill.id] ?? currentSkill.prompt : "";
-
-  const init = async () => {
-    setSkillsLoading(true);
-    try {
-      const [datesResp, historyResp, skillsResp] = await Promise.all([
-        http.get("/api/report-daily/dates", { params: { _t: Date.now() } }),
-        http.get("/api/agent/reports", { params: { page: 1, pageSize: 20, _t: Date.now() } }),
-        http.get("/api/agent/skills", { params: { _t: Date.now() } }),
-      ]);
-
-      const dates = Array.isArray(datesResp.data?.sales_dates) ? datesResp.data.sales_dates : [];
-      setSalesDates(dates);
-      setRange(resolveDefaultRange(periodType, dates[0]));
-
-      const skillItems = normalizeSkills(skillsResp.data?.items);
-      const defaultSkillId = String(skillsResp.data?.default_skill_id || skillItems[0]?.id || "");
-      setSkills(skillItems);
-      setSelectedSkillId(defaultSkillId);
-      setPromptDrafts(
-        skillItems.reduce((accumulator, item) => {
-          accumulator[item.id] = item.prompt;
-          return accumulator;
-        }, {})
-      );
-
-      const items = Array.isArray(historyResp.data?.items) ? historyResp.data.items : [];
-      setHistory(items);
-      if (items[0]?.id) {
-        await viewReport(items[0].id);
-      }
-      setStatus({ type: "success", text: "系统就绪，可开始生成分析报告。" });
-    } catch (err) {
-      setStatus({ type: "error", text: err?.response?.data?.message || err.message || "初始化失败" });
-    } finally {
-      setSkillsLoading(false);
-    }
-  };
-
-  const refreshHistory = async () => {
-    setHistoryLoading(true);
-    try {
-      const resp = await http.get("/api/agent/reports", { params: { page: 1, pageSize: 20, _t: Date.now() } });
-      const items = Array.isArray(resp.data?.items) ? resp.data.items : [];
-      setHistory(items);
-    } catch (err) {
-      message.error(err?.response?.data?.message || err.message || "读取历史报告失败");
-    } finally {
-      setHistoryLoading(false);
-    }
-  };
-
-  const viewReport = async (id) => {
-    const resp = await http.get(`/api/agent/reports/${encodeURIComponent(id)}`, { params: { _t: Date.now() } });
-    setReport(resp.data?.report || null);
-  };
-
-  const handleSkillSelect = (skillId) => {
-    setSelectedSkillId(skillId);
-    setPromptDrafts((prev) => {
-      if (prev[skillId] !== undefined) {
-        return prev;
-      }
-      const skill = skills.find((item) => item.id === skillId);
-      return {
-        ...prev,
-        [skillId]: skill?.prompt || "",
+      const userMessage = { id: `u-${Date.now()}`, role: "user", content: question };
+      const agentMessage = {
+        id: `a-${Date.now()}`,
+        role: "agent",
+        status: "running",
+        statusLine: "正在启动分析...",
+        trace: [],
+        summary: "",
+        reportId: null,
+        errorMessage: "",
       };
-    });
-  };
 
-  const handlePromptChange = (event) => {
-    const nextValue = String(event.target.value || "");
-    if (!currentSkill) {
-      return;
-    }
-    setPromptDrafts((prev) => ({
-      ...prev,
-      [currentSkill.id]: nextValue,
-    }));
-  };
-
-  const resetPrompt = () => {
-    if (!currentSkill) {
-      return;
-    }
-    setPromptDrafts((prev) => ({
-      ...prev,
-      [currentSkill.id]: currentSkill.prompt,
-    }));
-  };
-
-  const runReport = async () => {
-    if (loading) {
-      return;
-    }
-    if (!Array.isArray(range) || range.length !== 2 || !range[0] || !range[1]) {
-      setStatus({ type: "error", text: "请先选择开始和结束日期。" });
-      return;
-    }
-    if (!currentSkill) {
-      setStatus({ type: "error", text: "请先选择分析技能。" });
-      return;
-    }
-
-    const startDate = range[0].format("YYYY-MM-DD");
-    const endDate = range[1].format("YYYY-MM-DD");
-    setLoading(true);
-    setStatus({ type: "info", text: "正在计算指标并生成报告，请稍候..." });
-
-    try {
-      const resp = await http.post("/api/agent/run", {
-        period_type: periodType,
-        start_date: startDate,
-        end_date: endDate,
-        skill_id: currentSkill.id,
-        prompt_text: currentPrompt,
-      });
-      const data = resp.data || {};
-      if (data.ok === false) {
-        setStatus({ type: "error", text: data.message || "报告生成失败" });
-        return;
+      let conversationId = activeId;
+      if (!conversationId) {
+        conversationId = createConversation(userMessage);
+        updateConversation(conversationId, (items) => [...items, agentMessage]);
+      } else {
+        updateConversation(conversationId, (items) => [...items, userMessage, agentMessage]);
       }
 
-      setReport({
-        id: data.report_id,
-        period_type: periodType,
-        period_start: startDate,
-        period_end: endDate,
-        skill_id: data.skill_id || currentSkill.id,
-        skill_name: data.skill_name || currentSkill.name,
-        prompt_text: data.prompt_text || currentPrompt,
-        report_md: data.report_md,
-        status: "success",
-        created_at: data.created_at,
-      });
-      setStatus({ type: "success", text: `报告生成成功，ID: ${data.report_id}` });
-      await refreshHistory();
-    } catch (err) {
-      setStatus({ type: "error", text: err?.response?.data?.message || err.message || "报告生成失败" });
-    } finally {
-      setLoading(false);
-    }
-  };
+      setInput("");
+      setRunning(true);
 
-  const disabledDate = (value) => {
-    if (!value || !salesDates.length) {
-      return false;
-    }
-    return !salesDates.includes(value.format("YYYY-MM-DD"));
-  };
+      const abortController = new AbortController();
+      abortRef.current = abortController;
 
-  const historyColumns = useMemo(
-    () => [
-      { title: "ID", dataIndex: "id", key: "id", width: 90 },
-      { title: "周期", dataIndex: "period_type", key: "period_type", width: 90 },
-      {
-        title: "技能",
-        dataIndex: "skill_name",
-        key: "skill_name",
-        width: 120,
-        render: (text) => formatTextOrDash(text),
-      },
-      {
-        title: "范围",
-        key: "period",
-        render: (_, row) => `${row.period_start || "-"} ~ ${row.period_end || "-"}`,
-      },
-      {
-        title: "状态",
-        dataIndex: "status",
-        key: "status",
-        width: 90,
-        render: (text) => <Tag color={text === "success" ? "green" : "red"}>{text || "-"}</Tag>,
-      },
-      {
-        title: "创建时间",
-        dataIndex: "created_at",
-        key: "created_at",
-        width: 180,
-        render: (text) => formatDateTime(text),
-      },
-      {
-        title: "操作",
-        key: "action",
-        width: 100,
-        render: (_, row) => (
-          <Button size="small" onClick={() => viewReport(row.id)}>
-            查看
-          </Button>
-        ),
-      },
-    ],
-    []
+      const patchAgent = (patcher) => {
+        updateConversation(conversationId, (items) => {
+          const copy = items.slice();
+          const index = copy.findIndex((item) => item.id === agentMessage.id);
+          if (index === -1) return items;
+          copy[index] = { ...copy[index], ...patcher(copy[index]) };
+          return copy;
+        });
+      };
+
+      try {
+        const response = await fetch("/api/agent/react/stream", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+          signal: abortController.signal,
+        });
+
+        if (!response.ok || !response.body) {
+          const body = await response.text().catch(() => "");
+          throw new Error(`HTTP ${response.status} ${body.slice(0, 200)}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalReportMd = "";
+        let finalReportId = null;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const { events, rest } = parseSSEChunk(buffer);
+          buffer = rest;
+
+          for (const event of events) {
+            const line = eventToTraceLine(event);
+            const statusLine = statusLineFromEvent(event);
+            patchAgent((message) => ({
+              trace: line ? [...message.trace, line] : message.trace,
+              statusLine: statusLine ?? message.statusLine,
+            }));
+
+            if (event._type === "think:content" && event.is_final && event.content) {
+              finalReportMd = event.content;
+            }
+            if (event._type === "run:success" || (event._type === "done" && event?.result?.ok)) {
+              const payload = event.result || event;
+              finalReportMd = payload.report_md || finalReportMd;
+              finalReportId = payload.report_id || finalReportId;
+            }
+            if (event._type === "run:failed" || event._type === "run:aborted") {
+              patchAgent(() => ({
+                status: "error",
+                statusLine: "",
+                errorMessage: event.message || "运行失败",
+              }));
+            }
+          }
+        }
+
+        if (finalReportMd || finalReportId) {
+          patchAgent(() => ({
+            status: "success",
+            statusLine: "",
+            summary: summarizeReport(finalReportMd) || "分析完成，点击查看完整报告。",
+            reportId: finalReportId,
+          }));
+        } else {
+          patchAgent((message) =>
+            message.status === "error"
+              ? {}
+              : { status: "error", statusLine: "", errorMessage: "未收到完整响应" }
+          );
+        }
+      } catch (err) {
+        if (err.name === "AbortError") {
+          patchAgent(() => ({
+            status: "error",
+            statusLine: "",
+            errorMessage: "已取消",
+          }));
+        } else {
+          patchAgent(() => ({
+            status: "error",
+            statusLine: "",
+            errorMessage: err?.message || "请求失败",
+          }));
+        }
+      } finally {
+        abortRef.current = null;
+        setRunning(false);
+        setTimeout(() => inputRef.current?.focus(), 50);
+      }
+    },
+    [activeId, running, createConversation, updateConversation]
   );
+
+  const handleSend = useCallback(() => {
+    void sendQuestion(input);
+  }, [input, sendQuestion]);
+
+  const handleComposerKey = useCallback(
+    (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        handleSend();
+      }
+    },
+    [handleSend]
+  );
+
+  const handleNewConversation = useCallback(() => {
+    if (running && abortRef.current) abortRef.current.abort();
+    setActiveId(null);
+    setInput("");
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }, [running, setActiveId]);
 
   return (
-    <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <Card className="hero-card" size="small">
-        <Title level={3} style={{ marginBottom: 8 }}>
-          经营分析 Agent
-        </Title>
-        <Text type="secondary">仅使用聚合指标调用 AI，不传 SKU / 款号 / 品名明细，可按技能模板调整分析 prompt。</Text>
-      </Card>
+    <div className={`chat-page chat-theme chat-layout${sidebarCollapsed ? " is-sidebar-collapsed" : ""}`}>
+      <ConversationSidebar
+        conversations={conversations}
+        activeId={activeId}
+        onSelect={setActiveId}
+        onCreate={handleNewConversation}
+        onDelete={deleteConversation}
+        onRename={renameConversation}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
+      />
 
-      <Card title="分析参数" bordered={false} size="small" className="dense-card">
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
-          <Radio.Group value={periodType} onChange={(event) => setPeriodType(event.target.value)}>
-            <Radio.Button value="day">日</Radio.Button>
-            <Radio.Button value="week">周</Radio.Button>
-            <Radio.Button value="month">月</Radio.Button>
-          </Radio.Group>
-          <Space wrap>
-            <RangePicker value={range} onChange={(values) => setRange(values || [])} disabledDate={disabledDate} allowClear={false} />
-            <Button type="primary" loading={loading} onClick={runReport}>
-              生成分析
-            </Button>
-            <Button onClick={refreshHistory} loading={historyLoading}>
-              刷新历史
-            </Button>
-          </Space>
-          <Alert type={status.type} showIcon message={status.text} />
-        </Space>
-      </Card>
+      <div className="chat-main">
+        <div className="chat-shell">
+          <div className="chat-thread" ref={threadRef}>
+            {messages.length === 0 ? <Welcome onPick={(prompt) => void sendQuestion(prompt)} /> : null}
+            {messages.map((message) =>
+              message.role === "user" ? (
+                <UserBubble key={message.id} message={message} />
+              ) : (
+                <AgentBubble
+                  key={message.id}
+                  message={message}
+                  onOpenReport={() => setDrawerReportId(message.reportId)}
+                />
+              )
+            )}
+          </div>
+        </div>
 
-      <Card title="技能模板与 Prompt" bordered={false} size="small" className="dense-card" loading={skillsLoading}>
-        <Space direction="vertical" size={14} style={{ width: "100%" }}>
-          <Row gutter={[12, 12]}>
-            {skills.map((skill) => (
-              <Col xs={24} md={12} xl={6} key={skill.id}>
-                <button
-                  type="button"
-                  className={`analysis-skill-card ${selectedSkillId === skill.id ? "is-active" : ""}`}
-                  onClick={() => handleSkillSelect(skill.id)}
-                >
-                  <span className="analysis-skill-name">{skill.name}</span>
-                  <span className="analysis-skill-desc">{skill.description}</span>
-                </button>
-              </Col>
-            ))}
-          </Row>
-
-          <Space direction="vertical" size={8} style={{ width: "100%" }}>
-            <Space wrap align="center">
-              <Text strong>当前技能：</Text>
-              <Tag color="blue">{currentSkill?.name || "-"}</Tag>
-              <Button size="small" onClick={resetPrompt} disabled={!currentSkill}>
-                恢复模板
-              </Button>
-            </Space>
-            <TextArea
-              rows={7}
-              value={currentPrompt}
-              onChange={handlePromptChange}
-              placeholder="选择 skill 后可修改 prompt"
+        <div className="chat-composer-wrap">
+          <div className="chat-composer">
+            <textarea
+              ref={inputRef}
+              className="chat-composer-input"
+              placeholder="输入你的经营分析问题...（Enter 发送，Shift+Enter 换行）"
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={handleComposerKey}
+              rows={1}
+              disabled={running}
             />
-          </Space>
-        </Space>
-      </Card>
+            <button
+              type="button"
+              className="chat-composer-send"
+              onClick={handleSend}
+              disabled={running || !input.trim()}
+              aria-label="发送"
+            >
+              {running ? "..." : "↑"}
+            </button>
+          </div>
+        </div>
+      </div>
 
-      <Card
-        title="当前报告"
-        bordered={false}
-        size="small"
-        extra={
-          report ? (
-            <Text type="secondary">
-              ID: {report.id} | 周期: {report.period_type} | 技能: {formatTextOrDash(report.skill_name)} | 创建: {formatDateTime(report.created_at)}
-            </Text>
-          ) : null
-        }
-      >
-        {report?.report_md ? (
-          <Space direction="vertical" size={12} style={{ width: "100%" }}>
-            {report?.prompt_text ? (
-              <Alert
-                type="info"
-                showIcon
-                message={`本次技能：${formatTextOrDash(report.skill_name)}`}
-                description={report.prompt_text}
-              />
+      <ReportDrawer reportId={drawerReportId} onClose={() => setDrawerReportId(null)} />
+    </div>
+  );
+}
+
+function Welcome({ onPick }) {
+  return (
+    <div className="chat-welcome">
+      <h1 className="chat-welcome-title">经营分析助手</h1>
+      <p className="chat-welcome-sub">告诉我你想看什么：销额复盘、品类归因、异常诊断、活动复盘都可以。</p>
+      <div className="chat-quick-grid">
+        {QUICK_PROMPTS.map((prompt) => (
+          <button key={prompt.label} type="button" className="chat-quick-btn" onClick={() => onPick(prompt.prompt)}>
+            <span className="chat-quick-icon">{prompt.icon}</span>
+            <span className="chat-quick-label">{prompt.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function UserBubble({ message }) {
+  return (
+    <div className="chat-msg chat-msg-user">
+      <div className="chat-bubble">{message.content}</div>
+    </div>
+  );
+}
+
+function AgentBubble({ message, onOpenReport }) {
+  const [traceOpen, setTraceOpen] = useState(false);
+  const running = message.status === "running";
+  const hasReport = Boolean(message.reportId);
+
+  return (
+    <div className="chat-msg chat-msg-agent">
+      <div className="chat-bubble">
+        {running ? (
+          <div className="chat-status-line">
+            <span className="chat-status-spinner" />
+            <span>{message.statusLine || "正在分析..."}</span>
+          </div>
+        ) : null}
+
+        {message.status === "success" ? <div>{message.summary}</div> : null}
+
+        {message.status === "error" ? (
+          <div style={{ color: "#b23a2b" }}>运行失败：{message.errorMessage || "未知错误"}</div>
+        ) : null}
+
+        {hasReport || (!running && message.trace?.length > 0) ? (
+          <div className="chat-bubble-footer">
+            {hasReport ? (
+              <button type="button" className="chat-action-btn" onClick={onOpenReport}>
+                查看完整报告
+              </button>
             ) : null}
-            <div className="markdown-card">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.report_md}</ReactMarkdown>
-            </div>
-          </Space>
-        ) : (
-          <Empty description="暂无报告" />
-        )}
-      </Card>
+            {message.trace?.length > 0 ? (
+              <button
+                type="button"
+                className="chat-action-btn is-secondary"
+                onClick={() => setTraceOpen((value) => !value)}
+              >
+                {traceOpen ? "收起" : "展开"}调用过程（{message.trace.length}）
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
-      <Card title="历史报告" bordered={false} size="small">
-        <Table
-          rowKey={(row) => row.id}
-          className="app-compact-table"
-          columns={historyColumns}
-          dataSource={history}
-          loading={historyLoading}
-          pagination={false}
-          size="small"
-          scroll={{ x: 860 }}
-        />
-      </Card>
-    </Space>
+        {traceOpen && message.trace?.length > 0 ? (
+          <div className="chat-trace">
+            <div className="chat-trace-body">
+              {message.trace.map((line, index) => (
+                <div key={index} className="chat-trace-line">
+                  <span className="chat-trace-ts">{line.ts}</span>
+                  <span className={`chat-trace-prefix kind-${line.kind}`}>{line.prefix}</span>
+                  <span className="chat-trace-msg">{line.msg}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
