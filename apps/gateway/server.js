@@ -889,6 +889,12 @@ require("./routes/report-export").register(app, {
   excelExportLimiter: limitConcurrency(EXCEL_EXPORT_SEMAPHORE),
 });
 
+require("./routes/inspection").register(app, {
+  express,
+  parsePositiveInt,
+  getPool: () => reportRepo.getPool(),
+});
+
 require("./routes/arrival").register(app, {
   express,
   proxyArrivalRequest,
@@ -1082,6 +1088,18 @@ function startServer() {
         log.warn({ err: msg }, `[warmup] dashboard cache failed: ${msg}`);
       }
     }, 200);
+
+    try {
+      const inspectionScheduler = require("./services/inspection");
+      const pool = reportRepo.getPool();
+      inspectionScheduler.start(pool, log);
+      log.info("[inspection] scheduler started");
+    } catch (err) {
+      if (err.code !== "MODULE_NOT_FOUND") {
+        const msg = String(err && err.message ? err.message : err);
+        log.warn({ err: msg }, `[inspection] scheduler start failed: ${msg}`);
+      }
+    }
   });
 }
 

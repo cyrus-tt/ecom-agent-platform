@@ -66,6 +66,13 @@ export const APP_MODULES = [
     menuKey: "/tools",
     description: "本地 Excel 小工具：移仓、洗码、调拨模板、断码预警、缺货处理",
   },
+  {
+    key: "agent_dashboard",
+    label: "操控台",
+    path: "/agent-dashboard",
+    menuKey: "/agent-dashboard",
+    description: "Agent 操控台：每日巡检简报、异常清单、活动时间线",
+  },
 ];
 
 export function hasModulePermission(auth, moduleKey) {

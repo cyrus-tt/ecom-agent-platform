@@ -67,6 +67,10 @@ function register(app, ctx) {
   app.get(["/tools", "/tools/"], requirePermission("tools"), (_req, res) => {
     sendReactApp(res);
   });
+
+  app.get(["/agent-dashboard", "/agent-dashboard/"], requirePermission("agent_dashboard"), (_req, res) => {
+    sendReactApp(res);
+  });
 }
 
 module.exports = { register };

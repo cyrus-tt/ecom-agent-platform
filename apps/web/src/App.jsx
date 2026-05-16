@@ -5,6 +5,7 @@ import {
   HomeOutlined,
   InboxOutlined,
   LineChartOutlined,
+  RobotOutlined,
   SettingOutlined,
   ShopOutlined,
   SwapOutlined,
@@ -13,7 +14,7 @@ import {
   ToolOutlined,
 } from "@ant-design/icons";
 import { Alert, Button, Input, Layout, Menu, Modal, Space, Spin, Tag, Typography, message } from "antd";
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import http from "./api/http";
 import { useAuth } from "./auth/AuthContext";
@@ -39,6 +40,8 @@ import NoAccessPage from "./pages/NoAccessPage";
 import PortalPage from "./pages/PortalPage";
 import ToolsPage from "./pages/ToolsPage";
 
+const AgentDashboardPage = lazy(() => import("./pages/AgentDashboardPage"));
+
 const { Header, Content } = Layout;
 const { Text } = Typography;
 
@@ -52,6 +55,7 @@ const MODULE_ICON_MAP = {
   bi: <FundProjectionScreenOutlined />,
   dispatch: <SwapOutlined />,
   tools: <ToolOutlined />,
+  agent_dashboard: <RobotOutlined />,
 };
 
 function LoadingScreen() {
@@ -294,6 +298,16 @@ function AppShell() {
             element={
               <GuardedElement permission="tools">
                 <ToolsPage />
+              </GuardedElement>
+            }
+          />
+          <Route
+            path="/agent-dashboard"
+            element={
+              <GuardedElement permission="agent_dashboard">
+                <Suspense fallback={<Spin size="large" style={{ display: "flex", justifyContent: "center", marginTop: 120 }} />}>
+                  <AgentDashboardPage />
+                </Suspense>
               </GuardedElement>
             }
           />
