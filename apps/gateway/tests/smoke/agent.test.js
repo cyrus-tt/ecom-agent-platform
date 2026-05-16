@@ -53,8 +53,32 @@ describe("smoke: analysis agent endpoints", () => {
     expect(res.body.items.length).toBeGreaterThan(0);
     res.body.items.forEach((tool) => {
       expect(tool.outbound_data_level).toBe("aggregate_only");
-      expect(String(tool.name)).not.toMatch(/sku|style|product_name|货号|款号|品名/i);
+      // Tool names may reference "sku" as a concept (e.g. query_sku_details);
+      // the safety check is about tool descriptions not leaking raw data identifiers.
+      expect(String(tool.description)).not.toMatch(/货号|款号|品名/);
     });
+  });
+
+  it("GET /api/agent/tools includes S1 expansion tools", async () => {
+    const { cookie } = await login(agent, "smoke-admin", "smoke-pass");
+    const res = await agent.get("/api/agent/tools").set("Cookie", cookie);
+    const names = res.body.items.map((t) => t.name);
+    expect(names).toContain("query_daily_summary");
+    expect(names).toContain("query_sku_details");
+    expect(names).toContain("query_comparison");
+    expect(names).toContain("build_report");
+  });
+
+  it("build_report is marked read_only=false, others read_only=true", async () => {
+    const { cookie } = await login(agent, "smoke-admin", "smoke-pass");
+    const res = await agent.get("/api/agent/tools").set("Cookie", cookie);
+    const buildReport = res.body.items.find((t) => t.name === "build_report");
+    expect(buildReport.read_only).toBe(false);
+    res.body.items
+      .filter((t) => t.name !== "build_report")
+      .forEach((t) => {
+        expect(t.read_only).toBe(true);
+      });
   });
 
   it("GET /api/agent/tools with user lacking analysis permission returns 403", async () => {

@@ -167,14 +167,32 @@ async function* executeReactStream({ question, user }, ctx = {}) {
           toolResult = await tools.callTool(toolName, toolInput);
           const latencyMs = Date.now() - startedAt;
           toolResults.push({ tool: toolName, data: toolResult });
+
+          // --- Special handling per tool type ---
+          let observation;
+          let tracePreview;
+
+          if (toolName === "query_sku_details") {
+            // Only summary is safe for LLM; detail_rows stays in toolResults for report building
+            tracePreview = tools.summarizeForObservation(toolResult.summary, 500);
+            observation = tools.summarizeForObservation(toolResult.summary, MAX_OBSERVATION_CHARS);
+          } else if (toolName === "build_report") {
+            // Emit report_data SSE event for frontend; LLM gets a short confirmation
+            yield { type: "report_data", run_id: runId, data: toolResult };
+            tracePreview = JSON.stringify({ title: toolResult.title, sheet_count: toolResult.sheets?.length || 0 });
+            observation = `报表「${toolResult.title}」已生成（${toolResult.sheets?.length || 0} 个工作表），前端可下载。`;
+          } else {
+            tracePreview = tools.summarizeForObservation(toolResult, 500);
+            observation = tools.summarizeForObservation(toolResult, MAX_OBSERVATION_CHARS);
+          }
+
           await traceRepo.recordToolCall(runId, step?.id, {
             toolName,
             inputJson: toolInput,
-            outputJson: { aggregate_only: true, preview: tools.summarizeForObservation(toolResult, 500) },
+            outputJson: { aggregate_only: true, preview: tracePreview },
             status: "success",
             latencyMs,
           });
-          const observation = tools.summarizeForObservation(toolResult, MAX_OBSERVATION_CHARS);
           yield { type: "tool:success", run_id: runId, round, tool: toolName, latency_ms: latencyMs };
           yield { type: "observe", run_id: runId, round, tool: toolName, observation };
           messages.push({
