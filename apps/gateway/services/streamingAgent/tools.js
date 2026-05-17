@@ -5,6 +5,7 @@ const reportRepo = require("../reportRepo");
 const metricsService = require("../metricsService");
 const { CHANNEL_DASHBOARD_OPTIONS } = require("../report/channel/options");
 const { SALES_DAILY_TABLE, SKU_FILTER_SQL } = require("../report/constants");
+const nl2sql = require("../semantic/nl2sql");
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const FORBIDDEN_OUTPUT_KEYS = ["sku", "style", "product_name", "货号", "款号", "品名"];
@@ -813,6 +814,43 @@ const TOOL_DEFS = [
       return result;
     },
   },
+  {
+    name: "query_dynamic",
+    description:
+      "用自然语言查询经营数据。当固定工具无法回答用户问题时使用此工具——它会根据语义模型动态生成 SQL 查询。支持任意维度交叉、自定义指标计算、灵活时间范围等。",
+    schema: z.object({
+      question: z.string().min(1),
+    }),
+    parameters: {
+      type: "object",
+      properties: {
+        question: {
+          type: "string",
+          description: "用户的自然语言问题，例如'哪个品类折扣率最大'",
+        },
+      },
+      required: ["question"],
+    },
+    async call(input) {
+      const pool = await reportRepo.getPool();
+      const result = await nl2sql.queryDynamic(pool, input.question);
+      if (!result.success) {
+        return {
+          answer: `查询失败：${result.error}`,
+          sql: result.sql,
+          success: false,
+        };
+      }
+      return {
+        answer: `查询成功，返回 ${result.row_count} 行数据`,
+        sql: result.sql,
+        row_count: result.row_count,
+        data: result.rows,
+        success: true,
+        retried: result.retried || false,
+      };
+    },
+  },
 ];
 
 const TOOL_MAP = new Map(TOOL_DEFS.map((tool) => [tool.name, tool]));
@@ -858,6 +896,11 @@ async function callTool(name, input) {
 
   // build_report schema may contain user-facing fields (style_no etc.) — skip assertSafeModelPayload
   if (name === "build_report") {
+    return result;
+  }
+
+  // query_dynamic returns raw DB rows — skip field-name check
+  if (name === "query_dynamic") {
     return result;
   }
 

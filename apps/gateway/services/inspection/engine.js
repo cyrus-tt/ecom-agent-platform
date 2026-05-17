@@ -2,6 +2,7 @@
 
 const { SALES_DAILY_TABLE, SKU_FILTER_SQL } = require("../report/constants");
 const { CHANNEL_DASHBOARD_OPTIONS } = require("../report/channel/options");
+const { getDetectionRule } = require("../semantic/loader");
 
 // GMV = sales_qty * tag_price per channel row
 function gmvExpr(salesQtyKey) {
@@ -75,7 +76,8 @@ async function detectSalesDropDoD(pool, anomalies, anchorDate) {
     const row = rows[0];
     if (row.change_pct === null) continue;
 
-    const severity = classifySeverity(Number(row.change_pct), 10, 25);
+    const dodRule = getDetectionRule("sales_drop_dod") || { warn_threshold: 10, crit_threshold: 25 };
+    const severity = classifySeverity(Number(row.change_pct), dodRule.warn_threshold, dodRule.crit_threshold);
     if (!severity) continue;
 
     anomalies.push({
@@ -123,7 +125,8 @@ async function detectSalesDropWoW(pool, anomalies, anchorDate) {
     const row = rows[0];
     if (row.change_pct === null) continue;
 
-    const severity = classifySeverity(Number(row.change_pct), 15, 30);
+    const wowRule = getDetectionRule("sales_drop_wow") || { warn_threshold: 15, crit_threshold: 30 };
+    const severity = classifySeverity(Number(row.change_pct), wowRule.warn_threshold, wowRule.crit_threshold);
     if (!severity) continue;
 
     anomalies.push({
@@ -142,6 +145,7 @@ async function detectSalesDropWoW(pool, anomalies, anchorDate) {
 // ── Type 3: Zero-sales SKUs in last 7 days, grouped by category ─────────────
 
 async function detectZeroSalesSku(pool, anomalies, anchorDate) {
+  const zeroRule = getDetectionRule("zero_sales_sku") || { min_count: 20, lookback_days: 14 };
   const salesSumExpr = rowSalesQtyExpr();
 
   const sql = `
@@ -153,7 +157,7 @@ async function detectZeroSalesSku(pool, anomalies, anchorDate) {
                  THEN (${salesSumExpr})
                  ELSE 0 END) AS last_7d_qty
       FROM ${SALES_DAILY_TABLE}
-      WHERE sales_date BETWEEN ($1::date - interval '13 day')::date AND $1::date
+      WHERE sales_date BETWEEN ($1::date - interval '${zeroRule.lookback_days - 1} day')::date AND $1::date
         AND ${SKU_FILTER_SQL}
       GROUP BY sku
     )
@@ -161,7 +165,7 @@ async function detectZeroSalesSku(pool, anomalies, anchorDate) {
     FROM sku_rollup
     WHERE coalesce(last_7d_qty, 0) = 0
     GROUP BY category
-    HAVING count(*) > 20
+    HAVING count(*) > ${zeroRule.min_count}
     ORDER BY count(*) DESC`;
 
   const { rows } = await pool.query(sql, [anchorDate]);

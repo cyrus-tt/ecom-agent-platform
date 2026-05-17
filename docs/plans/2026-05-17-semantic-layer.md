@@ -3,7 +3,7 @@
 **PROGRESS 编号**：F-SEMANTIC-LAYER
 **创建于**：2026-05-17
 **Deadline**：—
-**状态**：⚪ draft
+**状态**：🔵 in-progress
 
 ---
 
@@ -30,7 +30,7 @@
 
 ### Phase A：语义配置设计（Cyrus 主导 + Claude 辅助）
 
-**S1** — Cyrus 列出日常会问的 20-30 个典型问题（自然语言）
+**S1** — Claude 从现有工具提取初版示例问题（5-10 个），Cyrus 日常使用中渐进补充
 - 产出：`docs/semantic/example_questions.md`
 
 **S2** — Cyrus 审核/补充业务术语表（Claude 从现有代码提取初稿）
@@ -104,7 +104,7 @@
 | 语义配置维护成本 | 新增字段/表时要同步更新 YAML | 配置加 validation，启动时检查是否与实际 schema 一致 |
 
 **阻塞**：
-- Cyrus 需要先列出典型问题清单（S1），这是整个项目的输入
+- ~~Cyrus 需要先列出典型问题清单（S1）~~ → 改为 Claude 出初版 + Cyrus 渐进补充，不再阻塞
 - 需要 DeepSeek API key 可用（Windows 环境）
 
 ## 8. 回滚方案
@@ -132,4 +132,4 @@
 
 ## 执行日志（动手后追加）
 
-<!-- 等 Cyrus 验收完现有功能 + 列出问题清单后启动 -->
+- **2026-05-17**：Cyrus approve PLAN，S1 改为渐进式（Claude 出初版示例 + Cyrus 日常补充）。开始 S2 语义提取。

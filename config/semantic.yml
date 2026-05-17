@@ -1,0 +1,647 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# semantic.yml — 安踏电商语义模型
+# 描述所有业务概念（表/列/渠道/指标/维度/关系/检测规则），
+# 供 NL2SQL Agent 生成查询、巡检引擎读取阈值。
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+version: "1.0"
+schema_name: anta_daily
+
+# ─── 表定义 ──────────────────────────────────────────────────────────────────
+
+tables:
+  rpt_sales_sku_daily:
+    description: SKU 粒度的每日销售宽表（按日期+SKU 聚合）
+    schema: anta_daily
+    primary_key: [sales_date, sku]
+    columns:
+      sales_date:
+        type: date
+        description: 销售日期
+      sku:
+        type: text
+        description: 货号（SKU 编码）
+      style:
+        type: text
+        description: 款号
+      major_category:
+        type: text
+        description: 大品类（如：鞋/服装/配件）
+      category:
+        type: text
+        description: 品类（如：跑步鞋/篮球鞋/羽绒服）
+      product_name:
+        type: text
+        description: 品名
+      tag_price:
+        type: numeric
+        description: 零售吊牌价（元）
+      season:
+        type: text
+        description: 产品季（如：2025春夏）
+      gender:
+        type: text
+        description: 性别（男/女/中性）
+      story_pack:
+        type: text
+        description: 故事包（产品系列分组）
+      # ── 销量列（22 渠道 + 1 合计）────────────────────────
+      sales_women_qty:          { type: integer, description: "女子渠道销量" }
+      sales_outdoor_qty:        { type: integer, description: "户外渠道销量" }
+      sales_trend_qty:          { type: integer, description: "潮流渠道销量" }
+      sales_casual_qty:         { type: integer, description: "休闲渠道销量" }
+      sales_tmall_badminton_qty: { type: integer, description: "天猫羽球销量" }
+      sales_tmall_outlet_qty:   { type: integer, description: "天猫奥莱销量" }
+      sales_c_store_qty:        { type: integer, description: "C店销量" }
+      sales_outlet_anjianli_qty: { type: integer, description: "奥莱安建立销量" }
+      sales_tmall_flagship_qty: { type: integer, description: "天猫旗舰销量" }
+      sales_tmall_franchise_qty: { type: integer, description: "天猫专卖销量" }
+      sales_shanghai_franchise_qty: { type: integer, description: "上海专卖销量" }
+      sales_jd_flagship_qty:    { type: integer, description: "京东旗舰销量" }
+      sales_jd_franchise_qty:   { type: integer, description: "京东专卖销量" }
+      sales_jd_self_qty:        { type: integer, description: "京自营销量" }
+      sales_dewu_qty:           { type: integer, description: "得物销量" }
+      sales_vip_qty:            { type: integer, description: "唯品销量" }
+      sales_pdd_qty:            { type: integer, description: "拼多多销量" }
+      sales_interest_qty:       { type: integer, description: "兴趣渠道销量" }
+      sales_official_qty:       { type: integer, description: "官网销量" }
+      sales_group_buy_qty:      { type: integer, description: "团购销量" }
+      sales_distributor_qty:    { type: integer, description: "经销销量" }
+      sales_other_qty:          { type: integer, description: "其他渠道销量" }
+      sales_total_qty:          { type: integer, description: "全渠道销量合计" }
+      # ── 金额列 ────────────────────────────────────────────
+      sales_total_amount:       { type: numeric, description: "全渠道销售金额（实付）" }
+      sales_total_tag_amount:   { type: numeric, description: "全渠道吊牌金额" }
+      # ── SKU 级折扣率（22 渠道 + 1 合计）────────────────────
+      sku_discount_women:       { type: numeric, description: "女子渠道 SKU 折扣率" }
+      sku_discount_outdoor:     { type: numeric, description: "户外渠道 SKU 折扣率" }
+      sku_discount_trend:       { type: numeric, description: "潮流渠道 SKU 折扣率" }
+      sku_discount_casual:      { type: numeric, description: "休闲渠道 SKU 折扣率" }
+      sku_discount_tmall_badminton: { type: numeric, description: "天猫羽球 SKU 折扣率" }
+      sku_discount_tmall_outlet: { type: numeric, description: "天猫奥莱 SKU 折扣率" }
+      sku_discount_c_store:     { type: numeric, description: "C店 SKU 折扣率" }
+      sku_discount_outlet_anjianli: { type: numeric, description: "奥莱安建立 SKU 折扣率" }
+      sku_discount_tmall_flagship: { type: numeric, description: "天猫旗舰 SKU 折扣率" }
+      sku_discount_tmall_franchise: { type: numeric, description: "天猫专卖 SKU 折扣率" }
+      sku_discount_shanghai_franchise: { type: numeric, description: "上海专卖 SKU 折扣率" }
+      sku_discount_jd_flagship: { type: numeric, description: "京东旗舰 SKU 折扣率" }
+      sku_discount_jd_franchise: { type: numeric, description: "京东专卖 SKU 折扣率" }
+      sku_discount_jd_self:     { type: numeric, description: "京自营 SKU 折扣率" }
+      sku_discount_dewu:        { type: numeric, description: "得物 SKU 折扣率" }
+      sku_discount_vip:         { type: numeric, description: "唯品 SKU 折扣率" }
+      sku_discount_pdd:         { type: numeric, description: "拼多多 SKU 折扣率" }
+      sku_discount_interest:    { type: numeric, description: "兴趣渠道 SKU 折扣率" }
+      sku_discount_official:    { type: numeric, description: "官网 SKU 折扣率" }
+      sku_discount_group_buy:   { type: numeric, description: "团购 SKU 折扣率" }
+      sku_discount_distributor: { type: numeric, description: "经销 SKU 折扣率" }
+      sku_discount_other:       { type: numeric, description: "其他渠道 SKU 折扣率" }
+      sku_discount_total:       { type: numeric, description: "全渠道 SKU 折扣率" }
+      # ── 款级折扣率（22 渠道 + 1 合计）────────────────────
+      style_discount_women:     { type: numeric, description: "女子渠道款折扣率" }
+      style_discount_outdoor:   { type: numeric, description: "户外渠道款折扣率" }
+      style_discount_trend:     { type: numeric, description: "潮流渠道款折扣率" }
+      style_discount_casual:    { type: numeric, description: "休闲渠道款折扣率" }
+      style_discount_tmall_badminton: { type: numeric, description: "天猫羽球款折扣率" }
+      style_discount_tmall_outlet: { type: numeric, description: "天猫奥莱款折扣率" }
+      style_discount_c_store:   { type: numeric, description: "C店款折扣率" }
+      style_discount_outlet_anjianli: { type: numeric, description: "奥莱安建立款折扣率" }
+      style_discount_tmall_flagship: { type: numeric, description: "天猫旗舰款折扣率" }
+      style_discount_tmall_franchise: { type: numeric, description: "天猫专卖款折扣率" }
+      style_discount_shanghai_franchise: { type: numeric, description: "上海专卖款折扣率" }
+      style_discount_jd_flagship: { type: numeric, description: "京东旗舰款折扣率" }
+      style_discount_jd_franchise: { type: numeric, description: "京东专卖款折扣率" }
+      style_discount_jd_self:   { type: numeric, description: "京自营款折扣率" }
+      style_discount_dewu:      { type: numeric, description: "得物款折扣率" }
+      style_discount_vip:       { type: numeric, description: "唯品款折扣率" }
+      style_discount_pdd:       { type: numeric, description: "拼多多款折扣率" }
+      style_discount_interest:  { type: numeric, description: "兴趣渠道款折扣率" }
+      style_discount_official:  { type: numeric, description: "官网款折扣率" }
+      style_discount_group_buy: { type: numeric, description: "团购款折扣率" }
+      style_discount_distributor: { type: numeric, description: "经销款折扣率" }
+      style_discount_other:     { type: numeric, description: "其他渠道款折扣率" }
+      style_discount_total:     { type: numeric, description: "全渠道款折扣率" }
+
+  rpt_inventory_sku_latest:
+    description: SKU 粒度的最新库存快照（每日覆盖写入）
+    schema: anta_daily
+    primary_key: [sku]
+    columns:
+      inventory_snapshot_date:
+        type: date
+        description: 库存快照日期
+      sku:
+        type: text
+        description: 货号
+      style:
+        type: text
+        description: 款号
+      major_category:
+        type: text
+        description: 大品类
+      category:
+        type: text
+        description: 品类
+      product_name:
+        type: text
+        description: 品名
+      tag_price:
+        type: numeric
+        description: 零售吊牌价（元）
+      season:
+        type: text
+        description: 产品季
+      gender:
+        type: text
+        description: 性别
+      story_pack:
+        type: text
+        description: 故事包
+      # ── 库存列（按仓/渠道）──────────────────────────────
+      inv_huotong_qty:          { type: integer, description: "活通仓库存" }
+      inv_women_qty:            { type: integer, description: "女子渠道库存" }
+      inv_outdoor_qty:          { type: integer, description: "户外渠道库存" }
+      inv_trend_qty:            { type: integer, description: "潮流渠道库存" }
+      inv_casual_qty:           { type: integer, description: "休闲渠道库存" }
+      inv_c_store_qty:          { type: integer, description: "C店库存" }
+      inv_category_shared_qty:  { type: integer, description: "品类共享库存" }
+      inv_tmall_outlet_qty:     { type: integer, description: "天猫奥莱库存" }
+      inv_shared_qty:           { type: integer, description: "共享库存" }
+      inv_tmall_flagship_qty:   { type: integer, description: "天猫旗舰库存" }
+      inv_tmall_franchise_qty:  { type: integer, description: "天猫专卖库存" }
+      inv_shanghai_franchise_qty: { type: integer, description: "上海专卖库存" }
+      inv_jd_flagship_qty:      { type: integer, description: "京东旗舰库存" }
+      inv_jd_franchise_qty:     { type: integer, description: "京东专卖库存" }
+      inv_jd_self_qty:          { type: integer, description: "京自营库存" }
+      inv_dewu_qty:             { type: integer, description: "得物库存" }
+      inv_interest_qty:         { type: integer, description: "兴趣渠道库存" }
+      inv_vip_qty:              { type: integer, description: "唯品库存" }
+      inv_pdd_qty:              { type: integer, description: "拼多多库存" }
+      inv_distributor_qty:      { type: integer, description: "经销库存" }
+      inv_other_qty:            { type: integer, description: "其他渠道库存" }
+      inventory_total_qty:      { type: integer, description: "全渠道库存合计" }
+
+# ─── 渠道定义 ────────────────────────────────────────────────────────────────
+
+channels:
+  - code: women
+    label: 女子
+    sales_qty_col: sales_women_qty
+    inventory_qty_col: inv_women_qty
+    sku_discount_col: sku_discount_women
+    style_discount_col: style_discount_women
+    include_category_shared: true
+
+  - code: outdoor
+    label: 户外
+    sales_qty_col: sales_outdoor_qty
+    inventory_qty_col: inv_outdoor_qty
+    sku_discount_col: sku_discount_outdoor
+    style_discount_col: style_discount_outdoor
+    include_category_shared: true
+
+  - code: trend
+    label: 潮流
+    sales_qty_col: sales_trend_qty
+    inventory_qty_col: inv_trend_qty
+    sku_discount_col: sku_discount_trend
+    style_discount_col: style_discount_trend
+    include_category_shared: true
+
+  - code: casual
+    label: 休闲
+    sales_qty_col: sales_casual_qty
+    inventory_qty_col: inv_casual_qty
+    sku_discount_col: sku_discount_casual
+    style_discount_col: style_discount_casual
+    include_category_shared: true
+
+  - code: tmall_badminton
+    label: 天猫羽球
+    sales_qty_col: sales_tmall_badminton_qty
+    inventory_qty_col: null
+    sku_discount_col: sku_discount_tmall_badminton
+    style_discount_col: style_discount_tmall_badminton
+    include_category_shared: true
+
+  - code: tmall_outlet
+    label: 天猫奥莱
+    sales_qty_col: sales_tmall_outlet_qty
+    inventory_qty_col: inv_tmall_outlet_qty
+    sku_discount_col: sku_discount_tmall_outlet
+    style_discount_col: style_discount_tmall_outlet
+    include_category_shared: false
+
+  - code: c_store
+    label: C店
+    sales_qty_col: sales_c_store_qty
+    inventory_qty_col: inv_c_store_qty
+    sku_discount_col: sku_discount_c_store
+    style_discount_col: style_discount_c_store
+    include_category_shared: false
+
+  - code: outlet_anjianli
+    label: 奥莱安建立
+    sales_qty_col: sales_outlet_anjianli_qty
+    inventory_qty_col: null
+    sku_discount_col: sku_discount_outlet_anjianli
+    style_discount_col: style_discount_outlet_anjianli
+    include_category_shared: false
+
+  - code: tmall_flagship
+    label: 天猫旗舰
+    sales_qty_col: sales_tmall_flagship_qty
+    inventory_qty_col: inv_tmall_flagship_qty
+    sku_discount_col: sku_discount_tmall_flagship
+    style_discount_col: style_discount_tmall_flagship
+    include_category_shared: false
+
+  - code: tmall_franchise
+    label: 天猫专卖
+    sales_qty_col: sales_tmall_franchise_qty
+    inventory_qty_col: inv_tmall_franchise_qty
+    sku_discount_col: sku_discount_tmall_franchise
+    style_discount_col: style_discount_tmall_franchise
+    include_category_shared: false
+
+  - code: shanghai_franchise
+    label: 上海专卖
+    sales_qty_col: sales_shanghai_franchise_qty
+    inventory_qty_col: inv_shanghai_franchise_qty
+    sku_discount_col: sku_discount_shanghai_franchise
+    style_discount_col: style_discount_shanghai_franchise
+    include_category_shared: false
+
+  - code: jd_flagship
+    label: 京东旗舰
+    sales_qty_col: sales_jd_flagship_qty
+    inventory_qty_col: inv_jd_flagship_qty
+    sku_discount_col: sku_discount_jd_flagship
+    style_discount_col: style_discount_jd_flagship
+    include_category_shared: false
+
+  - code: jd_franchise
+    label: 京东专卖
+    sales_qty_col: sales_jd_franchise_qty
+    inventory_qty_col: inv_jd_franchise_qty
+    sku_discount_col: sku_discount_jd_franchise
+    style_discount_col: style_discount_jd_franchise
+    include_category_shared: false
+
+  - code: jd_self
+    label: 京自营
+    sales_qty_col: sales_jd_self_qty
+    inventory_qty_col: inv_jd_self_qty
+    sku_discount_col: sku_discount_jd_self
+    style_discount_col: style_discount_jd_self
+    include_category_shared: false
+
+  - code: dewu
+    label: 得物
+    sales_qty_col: sales_dewu_qty
+    inventory_qty_col: inv_dewu_qty
+    sku_discount_col: sku_discount_dewu
+    style_discount_col: style_discount_dewu
+    include_category_shared: false
+
+  - code: vip
+    label: 唯品
+    sales_qty_col: sales_vip_qty
+    inventory_qty_col: inv_vip_qty
+    sku_discount_col: sku_discount_vip
+    style_discount_col: style_discount_vip
+    include_category_shared: false
+
+  - code: pdd
+    label: 拼多多
+    sales_qty_col: sales_pdd_qty
+    inventory_qty_col: inv_pdd_qty
+    sku_discount_col: sku_discount_pdd
+    style_discount_col: style_discount_pdd
+    include_category_shared: false
+
+  - code: interest
+    label: 兴趣
+    sales_qty_col: sales_interest_qty
+    inventory_qty_col: inv_interest_qty
+    sku_discount_col: sku_discount_interest
+    style_discount_col: style_discount_interest
+    include_category_shared: false
+
+  - code: official
+    label: 官网
+    sales_qty_col: sales_official_qty
+    inventory_qty_col: null
+    sku_discount_col: sku_discount_official
+    style_discount_col: style_discount_official
+    include_category_shared: false
+
+  - code: group_buy
+    label: 团购
+    sales_qty_col: sales_group_buy_qty
+    inventory_qty_col: null
+    sku_discount_col: sku_discount_group_buy
+    style_discount_col: style_discount_group_buy
+    include_category_shared: false
+
+  - code: distributor
+    label: 经销
+    sales_qty_col: sales_distributor_qty
+    inventory_qty_col: inv_distributor_qty
+    sku_discount_col: sku_discount_distributor
+    style_discount_col: style_discount_distributor
+    include_category_shared: false
+
+  - code: other
+    label: 其他
+    sales_qty_col: sales_other_qty
+    inventory_qty_col: inv_other_qty
+    sku_discount_col: sku_discount_other
+    style_discount_col: style_discount_other
+    include_category_shared: false
+
+# ─── 指标定义 ────────────────────────────────────────────────────────────────
+# sql 字段中用 {channel} 占位，运行时替换为具体渠道的列名
+
+metrics:
+  gmv:
+    label: GMV（出库金额）
+    description: 渠道销量 × 吊牌价 × 折扣率。全渠道时用 sales_total_amount
+    sql_channel: "coalesce(sum({sales_qty_col} * tag_price * coalesce(nullif({sku_discount_col}, 0), nullif({style_discount_col}, 0), 1.0)), 0)"
+    sql_total: "coalesce(sum(sales_total_amount), 0)"
+    unit: 元
+    agg: sum
+
+  tag_amount:
+    label: 吊牌金额
+    description: 销量 × 吊牌价（不含折扣）
+    sql_channel: "coalesce(sum({sales_qty_col} * tag_price), 0)"
+    sql_total: "coalesce(sum(sales_total_tag_amount), 0)"
+    unit: 元
+    agg: sum
+
+  sales_qty:
+    label: 销量
+    description: 渠道销售件数
+    sql_channel: "coalesce(sum({sales_qty_col}), 0)"
+    sql_total: "coalesce(sum(sales_total_qty), 0)"
+    unit: 件
+    agg: sum
+
+  inventory_qty:
+    label: 库存
+    description: 渠道库存件数（来自库存快照表）
+    sql_channel: "coalesce(sum({inventory_qty_col}), 0)"
+    sql_total: "coalesce(sum(inventory_total_qty), 0)"
+    unit: 件
+    agg: sum
+    table: rpt_inventory_sku_latest
+
+  sku_count:
+    label: 动销 SKU 数
+    description: 有销量的不同 SKU 数
+    sql_channel: "count(distinct case when {sales_qty_col} > 0 then sku end)"
+    sql_total: "count(distinct case when sales_total_qty > 0 then sku end)"
+    unit: 个
+    agg: count_distinct
+
+  avg_discount:
+    label: 平均折扣率
+    description: 渠道 SKU 级折扣率均值（0~1，1 = 不打折）
+    sql_channel: "avg(nullif({sku_discount_col}, 0))"
+    sql_total: "avg(nullif(sku_discount_total, 0))"
+    unit: ""
+    agg: avg
+
+  sell_through_rate:
+    label: 动销率
+    description: 有销量 SKU 数 / 总 SKU 数（需 JOIN 库存表）
+    derived: true
+    formula: "sku_count / total_sku_count"
+    unit: "%"
+
+  days_of_supply:
+    label: 库存可售天数
+    description: 当前库存 / 近 7 日日均销量
+    derived: true
+    formula: "inventory_qty / (sales_qty_7d / 7)"
+    unit: 天
+
+# ─── 维度 ────────────────────────────────────────────────────────────────────
+
+dimensions:
+  channel:
+    label: 渠道
+    description: 22 个销售渠道（见 channels 节）
+    type: enum
+    values_ref: channels
+
+  category:
+    label: 品类
+    column: category
+    coalesce: "coalesce(nullif(trim(category), ''), '未分类')"
+    table: [rpt_sales_sku_daily, rpt_inventory_sku_latest]
+
+  major_category:
+    label: 大品类
+    column: major_category
+    coalesce: "coalesce(nullif(trim(major_category), ''), '未标记大类')"
+    table: [rpt_sales_sku_daily, rpt_inventory_sku_latest]
+
+  gender:
+    label: 性别
+    column: gender
+    coalesce: "coalesce(nullif(trim(gender), ''), '未标记')"
+    table: [rpt_sales_sku_daily, rpt_inventory_sku_latest]
+
+  season:
+    label: 产品季
+    column: season
+    coalesce: "coalesce(nullif(trim(season), ''), '未标记产品季')"
+    table: [rpt_sales_sku_daily, rpt_inventory_sku_latest]
+
+  sales_date:
+    label: 销售日期
+    column: sales_date
+    type: date
+    granularity: [day, week, month]
+    table: [rpt_sales_sku_daily]
+
+  style:
+    label: 款号
+    column: style
+    coalesce: "coalesce(nullif(trim(style), ''), '未标记款号')"
+    table: [rpt_sales_sku_daily, rpt_inventory_sku_latest]
+
+  sku:
+    label: SKU/货号
+    column: sku
+    table: [rpt_sales_sku_daily, rpt_inventory_sku_latest]
+
+  story_pack:
+    label: 故事包
+    column: story_pack
+    table: [rpt_sales_sku_daily, rpt_inventory_sku_latest]
+
+# ─── 表关系 ──────────────────────────────────────────────────────────────────
+
+relationships:
+  - from: rpt_sales_sku_daily
+    to: rpt_inventory_sku_latest
+    join: "rpt_sales_sku_daily.sku = rpt_inventory_sku_latest.sku"
+    type: many_to_one
+    description: 销售表的 SKU 关联到库存快照表获取库存数量
+
+# ─── 全局过滤器 ──────────────────────────────────────────────────────────────
+
+global_filters:
+  sku_filter:
+    description: 排除测试/无效 SKU（含 u 或 v 的货号）
+    sql: "coalesce(sku, '') not ilike '%u%' and coalesce(sku, '') not ilike '%v%'"
+    always_apply: true
+
+# ─── 检测规则（巡检引擎读取）─────────────────────────────────────────────────
+
+detection_rules:
+  sales_drop_dod:
+    label: 日环比 GMV 下跌
+    description: 按渠道比较昨日 vs 前日 GMV
+    warn_threshold: 10
+    crit_threshold: 25
+    unit: "%"
+    lookback_days: 2
+
+  sales_drop_wow:
+    label: 周环比 GMV 下跌
+    description: 按渠道比较近 7 日 vs 前 7 日 GMV
+    warn_threshold: 15
+    crit_threshold: 30
+    unit: "%"
+    lookback_days: 14
+
+  zero_sales_sku:
+    label: 零销售 SKU
+    description: 近 14 天有数据但近 7 天销量为 0 的 SKU，按品类分组
+    min_count: 20
+    severity: warning
+    lookback_days: 14
+
+  new_product_underperform:
+    label: 新品零销售
+    description: 近 14 天内首次出现的 SKU 至今零销量
+    age_buckets:
+      - range: "0-7天"
+        severity: info
+      - range: "7-14天"
+        severity: warning
+    lookback_days: 14
+
+# ─── Few-shot 示例（NL2SQL 用）───────────────────────────────────────────────
+
+examples:
+  - question: "上周户外渠道 GMV 多少？"
+    sql: |
+      SELECT coalesce(sum(sales_outdoor_qty * tag_price * coalesce(nullif(sku_discount_outdoor, 0), nullif(style_discount_outdoor, 0), 1.0)), 0) AS gmv
+      FROM anta_daily.rpt_sales_sku_daily
+      WHERE sales_date BETWEEN (current_date - interval '7 day')::date AND (current_date - interval '1 day')::date
+        AND coalesce(sku, '') not ilike '%u%' AND coalesce(sku, '') not ilike '%v%'
+    explanation: 户外渠道的 GMV = sales_outdoor_qty × tag_price × 折扣率
+
+  - question: "哪个品类库存最多？"
+    sql: |
+      SELECT coalesce(nullif(trim(category), ''), '未分类') AS category,
+             sum(inventory_total_qty) AS total_inventory
+      FROM anta_daily.rpt_inventory_sku_latest
+      WHERE coalesce(sku, '') not ilike '%u%' AND coalesce(sku, '') not ilike '%v%'
+      GROUP BY 1
+      ORDER BY total_inventory DESC
+      LIMIT 10
+    explanation: 从库存快照表按品类汇总库存，降序排列
+
+  - question: "天猫旗舰上周卖了多少件？"
+    sql: |
+      SELECT coalesce(sum(sales_tmall_flagship_qty), 0) AS total_qty
+      FROM anta_daily.rpt_sales_sku_daily
+      WHERE sales_date BETWEEN (current_date - interval '7 day')::date AND (current_date - interval '1 day')::date
+        AND coalesce(sku, '') not ilike '%u%' AND coalesce(sku, '') not ilike '%v%'
+    explanation: 直接汇总天猫旗舰的销量列
+
+  - question: "男性跑步鞋上个月 GMV 前 10 的 SKU？"
+    sql: |
+      SELECT sku, product_name,
+             coalesce(sum(sales_total_qty * tag_price * coalesce(nullif(sku_discount_total, 0), nullif(style_discount_total, 0), 1.0)), 0) AS gmv,
+             sum(sales_total_qty) AS total_qty
+      FROM anta_daily.rpt_sales_sku_daily
+      WHERE sales_date >= date_trunc('month', current_date - interval '1 month')::date
+        AND sales_date < date_trunc('month', current_date)::date
+        AND coalesce(nullif(trim(gender), ''), '未标记') = '男'
+        AND coalesce(nullif(trim(category), ''), '未分类') ILIKE '%跑步%'
+        AND coalesce(sku, '') not ilike '%u%' AND coalesce(sku, '') not ilike '%v%'
+      GROUP BY sku, product_name
+      ORDER BY gmv DESC
+      LIMIT 10
+    explanation: 按性别+品类筛选，全渠道汇总 GMV，降序取 Top 10
+
+  - question: "得物渠道折扣率是多少？"
+    sql: |
+      SELECT avg(nullif(sku_discount_dewu, 0)) AS avg_discount
+      FROM anta_daily.rpt_sales_sku_daily
+      WHERE sales_date BETWEEN (current_date - interval '7 day')::date AND (current_date - interval '1 day')::date
+        AND coalesce(sku, '') not ilike '%u%' AND coalesce(sku, '') not ilike '%v%'
+        AND sales_dewu_qty > 0
+    explanation: 只看得物有销量的行，取 SKU 折扣率均值
+
+  - question: "各渠道上周 GMV 排名？"
+    sql: |
+      SELECT '女子' AS channel, coalesce(sum(sales_women_qty * tag_price * coalesce(nullif(sku_discount_women, 0), nullif(style_discount_women, 0), 1.0)), 0) AS gmv FROM anta_daily.rpt_sales_sku_daily WHERE sales_date BETWEEN (current_date - interval '7 day')::date AND (current_date - interval '1 day')::date AND coalesce(sku, '') not ilike '%u%' AND coalesce(sku, '') not ilike '%v%'
+      UNION ALL
+      SELECT '户外', coalesce(sum(sales_outdoor_qty * tag_price * coalesce(nullif(sku_discount_outdoor, 0), nullif(style_discount_outdoor, 0), 1.0)), 0) FROM anta_daily.rpt_sales_sku_daily WHERE sales_date BETWEEN (current_date - interval '7 day')::date AND (current_date - interval '1 day')::date AND coalesce(sku, '') not ilike '%u%' AND coalesce(sku, '') not ilike '%v%'
+      -- ... 其余 20 个渠道同理 UNION ALL ...
+      ORDER BY gmv DESC
+    explanation: 每个渠道单独计算 GMV，UNION ALL 合并后排序。实际生成时应包含全部 22 个渠道
+
+  - question: "今天哪些品类有库存断货风险（库存可售不到 7 天）？"
+    sql: |
+      WITH daily_avg AS (
+        SELECT sku, coalesce(sum(sales_total_qty), 0) / 7.0 AS avg_daily
+        FROM anta_daily.rpt_sales_sku_daily
+        WHERE sales_date >= (current_date - interval '7 day')::date
+          AND coalesce(sku, '') not ilike '%u%' AND coalesce(sku, '') not ilike '%v%'
+        GROUP BY sku
+      ),
+      supply AS (
+        SELECT i.sku, coalesce(nullif(trim(i.category), ''), '未分类') AS category,
+               i.inventory_total_qty,
+               CASE WHEN d.avg_daily > 0 THEN i.inventory_total_qty / d.avg_daily ELSE NULL END AS days_of_supply
+        FROM anta_daily.rpt_inventory_sku_latest i
+        LEFT JOIN daily_avg d ON d.sku = i.sku
+        WHERE coalesce(i.sku, '') not ilike '%u%' AND coalesce(i.sku, '') not ilike '%v%'
+      )
+      SELECT category, count(*) AS at_risk_skus, sum(inventory_total_qty) AS at_risk_qty
+      FROM supply
+      WHERE days_of_supply IS NOT NULL AND days_of_supply < 7
+      GROUP BY category
+      ORDER BY at_risk_skus DESC
+    explanation: 先算近 7 日日均销量，再用库存/日均算可售天数，筛出 <7 天的
+
+  - question: "上月新上架的 SKU 动销率怎么样？"
+    sql: |
+      WITH new_skus AS (
+        SELECT sku, min(sales_date) AS first_date
+        FROM anta_daily.rpt_sales_sku_daily
+        WHERE coalesce(sku, '') not ilike '%u%' AND coalesce(sku, '') not ilike '%v%'
+        GROUP BY sku
+        HAVING min(sales_date) >= date_trunc('month', current_date - interval '1 month')::date
+          AND min(sales_date) < date_trunc('month', current_date)::date
+      ),
+      sku_sales AS (
+        SELECT n.sku, coalesce(sum(s.sales_total_qty), 0) AS total_qty
+        FROM new_skus n
+        JOIN anta_daily.rpt_sales_sku_daily s ON s.sku = n.sku AND s.sales_date >= n.first_date
+        WHERE coalesce(s.sku, '') not ilike '%u%' AND coalesce(s.sku, '') not ilike '%v%'
+        GROUP BY n.sku
+      )
+      SELECT count(*) AS total_new_skus,
+             count(case when total_qty > 0 then 1 end) AS sold_skus,
+             round(count(case when total_qty > 0 then 1 end)::numeric / nullif(count(*), 0) * 100, 2) AS sell_through_pct
+      FROM sku_sales
+    explanation: 找上月首次出现的 SKU，计算有销量的比例

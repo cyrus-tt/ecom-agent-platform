@@ -20,5 +20,9 @@
     "ops:start:saas": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\ops\\windows\\start_saas_core.ps1",
     "ops:stop:saas": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\ops\\windows\\stop_saas_core.ps1",
     "ops:smoke:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\smoke_all_modules.ps1 -OutputPath .\\runtime\\smoke-last.json"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.1",
+    "zod": "^4.4.3"
   }
 }
