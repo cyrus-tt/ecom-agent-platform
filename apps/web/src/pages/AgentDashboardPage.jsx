@@ -1,18 +1,25 @@
 import {
   AlertOutlined,
   CheckCircleOutlined,
+  CheckOutlined,
   ClockCircleOutlined,
+  CloseOutlined,
   ExclamationCircleOutlined,
   InfoCircleOutlined,
   PlayCircleOutlined,
   SearchOutlined,
   MessageOutlined,
+  ThunderboltOutlined,
 } from "@ant-design/icons";
 import {
+  Badge,
   Button,
   Card,
   Collapse,
   Empty,
+  Input,
+  Modal,
+  Space,
   Spin,
   Table,
   Tag,
@@ -400,6 +407,183 @@ function HistoryTable({ inspections, loading }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Section E: Approval Queue                                          */
+/* ------------------------------------------------------------------ */
+
+function riskLevelTag(level) {
+  if (level === "high") return <Tag color="red">高风险</Tag>;
+  if (level === "medium") return <Tag color="orange">中风险</Tag>;
+  return <Tag color="blue">低风险</Tag>;
+}
+
+function proposalStatusTag(status) {
+  const map = {
+    pending: { color: "gold", text: "待审批" },
+    approved: { color: "blue", text: "已批准" },
+    executed: { color: "green", text: "已执行" },
+    rejected: { color: "default", text: "已拒绝" },
+    failed: { color: "red", text: "执行失败" },
+  };
+  const cfg = map[status] || { color: "default", text: status };
+  return <Tag color={cfg.color}>{cfg.text}</Tag>;
+}
+
+function actionTypeLabel(type) {
+  const map = {
+    notify: "发送通知",
+    acknowledge: "确认记录",
+    investigate: "排查调查",
+    adjust_inventory: "库存调整",
+    create_promotion: "制定推广",
+  };
+  return map[type] || type;
+}
+
+function ApprovalQueue({ proposals, loading, onApprove, onReject, onRefresh }) {
+  const { isAdmin } = useAuth();
+  const [rejectModal, setRejectModal] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [actionLoading, setActionLoading] = useState({});
+
+  const pending = (proposals || []).filter((p) => p.status === "pending");
+  const decided = (proposals || []).filter((p) => p.status !== "pending");
+
+  async function handleApprove(id) {
+    setActionLoading((s) => ({ ...s, [id]: true }));
+    try {
+      await onApprove(id);
+    } finally {
+      setActionLoading((s) => ({ ...s, [id]: false }));
+    }
+  }
+
+  function handleRejectClick(proposal) {
+    setRejectModal(proposal);
+    setRejectReason("");
+  }
+
+  async function handleRejectConfirm() {
+    if (!rejectModal) return;
+    setActionLoading((s) => ({ ...s, [rejectModal.id]: true }));
+    try {
+      await onReject(rejectModal.id, rejectReason);
+    } finally {
+      setActionLoading((s) => ({ ...s, [rejectModal.id]: false }));
+      setRejectModal(null);
+      setRejectReason("");
+    }
+  }
+
+  if (loading) {
+    return <Spin size="small" />;
+  }
+
+  if (!proposals || proposals.length === 0) {
+    return <Empty description="暂无待处理建议" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  }
+
+  return (
+    <div className="agent-dash-proposals">
+      {pending.length > 0 && (
+        <div className="agent-dash-proposals-pending">
+          {pending.map((p) => (
+            <div key={p.id} className="agent-dash-proposal-card pending">
+              <div className="agent-dash-proposal-header">
+                {riskLevelTag(p.risk_level)}
+                <Tag>{actionTypeLabel(p.action_type)}</Tag>
+                <span className="agent-dash-proposal-title">{p.title}</span>
+              </div>
+              {p.description && (
+                <div className="agent-dash-proposal-desc">{p.description}</div>
+              )}
+              <div className="agent-dash-proposal-time">
+                <ClockCircleOutlined style={{ marginRight: 4 }} />
+                {relativeTime(p.created_at)}
+              </div>
+              {isAdmin && (
+                <div className="agent-dash-proposal-actions">
+                  <Space>
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<CheckOutlined />}
+                      loading={actionLoading[p.id]}
+                      onClick={() => handleApprove(p.id)}
+                    >
+                      批准执行
+                    </Button>
+                    <Button
+                      size="small"
+                      danger
+                      icon={<CloseOutlined />}
+                      loading={actionLoading[p.id]}
+                      onClick={() => handleRejectClick(p)}
+                    >
+                      拒绝
+                    </Button>
+                  </Space>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {decided.length > 0 && (
+        <Collapse
+          items={[
+            {
+              key: "decided",
+              label: `已处理建议 (${decided.length})`,
+              children: (
+                <div className="agent-dash-proposals-decided">
+                  {decided.map((p) => (
+                    <div key={p.id} className={`agent-dash-proposal-card ${p.status}`}>
+                      <div className="agent-dash-proposal-header">
+                        {proposalStatusTag(p.status)}
+                        <Tag>{actionTypeLabel(p.action_type)}</Tag>
+                        <span className="agent-dash-proposal-title">{p.title}</span>
+                      </div>
+                      {p.reject_reason && (
+                        <div className="agent-dash-proposal-desc" style={{ color: "#cf1322" }}>
+                          拒绝原因：{p.reject_reason}
+                        </div>
+                      )}
+                      <div className="agent-dash-proposal-time">
+                        {relativeTime(p.decided_at || p.created_at)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ),
+            },
+          ]}
+          bordered={false}
+          ghost
+        />
+      )}
+
+      <Modal
+        title="拒绝建议"
+        open={!!rejectModal}
+        onOk={handleRejectConfirm}
+        onCancel={() => setRejectModal(null)}
+        okText="确认拒绝"
+        cancelText="取消"
+      >
+        <p>确定拒绝：{rejectModal?.title}？</p>
+        <Input.TextArea
+          placeholder="拒绝原因（可选）"
+          value={rejectReason}
+          onChange={(e) => setRejectReason(e.target.value)}
+          rows={3}
+        />
+      </Modal>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main Page Component                                                */
 /* ------------------------------------------------------------------ */
 
@@ -410,6 +594,10 @@ export default function AgentDashboardPage() {
   const [latestInspection, setLatestInspection] = useState(null);
   const [latestLoading, setLatestLoading] = useState(true);
   const [triggerLoading, setTriggerLoading] = useState(false);
+
+  // Approval queue (Section E)
+  const [proposals, setProposals] = useState([]);
+  const [proposalsLoading, setProposalsLoading] = useState(true);
 
   // Activity timeline (Section C)
   const [activities, setActivities] = useState([]);
@@ -427,13 +615,29 @@ export default function AgentDashboardPage() {
       });
       setLatestInspection(resp.data?.inspection || null);
     } catch (err) {
-      // 404 means no inspection today, that's fine
       if (err?.response?.status !== 404) {
         message.error(errorMessage(err, "获取最新巡检失败"));
       }
       setLatestInspection(null);
     } finally {
       setLatestLoading(false);
+    }
+  }, []);
+
+  const fetchProposals = useCallback(async () => {
+    setProposalsLoading(true);
+    try {
+      const resp = await http.get("/api/agent/proposals", {
+        params: { limit: 50, _t: Date.now() },
+      });
+      setProposals(Array.isArray(resp.data?.items) ? resp.data.items : []);
+    } catch (err) {
+      if (err?.response?.status !== 404) {
+        message.error(errorMessage(err, "获取审批队列失败"));
+      }
+      setProposals([]);
+    } finally {
+      setProposalsLoading(false);
     }
   }, []);
 
@@ -475,9 +679,31 @@ export default function AgentDashboardPage() {
 
   useEffect(() => {
     void fetchLatest();
+    void fetchProposals();
     void fetchActivities();
     void fetchHistory();
-  }, [fetchLatest, fetchActivities, fetchHistory]);
+  }, [fetchLatest, fetchProposals, fetchActivities, fetchHistory]);
+
+  async function handleApproveProposal(id) {
+    try {
+      await http.post(`/api/agent/proposals/${id}/approve`);
+      message.success("建议已批准并执行");
+      void fetchProposals();
+      void fetchActivities();
+    } catch (err) {
+      message.error(errorMessage(err, "批准失败"));
+    }
+  }
+
+  async function handleRejectProposal(id, reason) {
+    try {
+      await http.post(`/api/agent/proposals/${id}/reject`, { reason });
+      message.success("建议已拒绝");
+      void fetchProposals();
+    } catch (err) {
+      message.error(errorMessage(err, "拒绝失败"));
+    }
+  }
 
   async function handleTriggerInspection() {
     setTriggerLoading(true);
@@ -486,9 +712,9 @@ export default function AgentDashboardPage() {
         params: { _t: Date.now() },
       });
       message.success("巡检已触发，请稍后刷新查看结果");
-      // Re-fetch after a short delay to give the agent time to start
       setTimeout(() => {
         void fetchLatest();
+        void fetchProposals();
         void fetchActivities();
         void fetchHistory();
       }, 3000);
@@ -510,6 +736,37 @@ export default function AgentDashboardPage() {
         onTrigger={handleTriggerInspection}
         triggerLoading={triggerLoading}
       />
+
+      {/* Section E: Approval Queue */}
+      <Card
+        title={
+          <span>
+            <ThunderboltOutlined style={{ marginRight: 8, color: "#eb2f96" }} />
+            审批队列
+            {proposals.filter((p) => p.status === "pending").length > 0 && (
+              <Badge
+                count={proposals.filter((p) => p.status === "pending").length}
+                style={{ marginLeft: 8 }}
+              />
+            )}
+          </span>
+        }
+        className="agent-dash-card"
+        style={{ marginTop: 16 }}
+        extra={
+          <Button size="small" onClick={fetchProposals} loading={proposalsLoading}>
+            刷新
+          </Button>
+        }
+      >
+        <ApprovalQueue
+          proposals={proposals}
+          loading={proposalsLoading}
+          onApprove={handleApproveProposal}
+          onReject={handleRejectProposal}
+          onRefresh={fetchProposals}
+        />
+      </Card>
 
       {/* Section B + C: Anomaly List + Activity Timeline */}
       <div className="agent-dash-grid">

@@ -2,6 +2,7 @@
 
 const cron = require("node-cron");
 const engine = require("./engine");
+const proposals = require("./proposals");
 
 let task = null;
 
@@ -18,7 +19,13 @@ function start(pool, logger) {
       logger.info("Daily inspection started");
       try {
         const result = await engine.runInspection(pool);
-        await persistResult(pool, result, logger);
+        const inspectionId = await persistResult(pool, result, logger);
+        if (inspectionId && result.anomalies.length) {
+          const generated = proposals.generateProposals(result.anomalies);
+          const persisted = await proposals.persistProposals(pool, inspectionId, generated);
+          await proposals.autoExecuteLowMedium(pool, persisted);
+          logger.info({ proposals: persisted.length, pending: persisted.filter(p => p.status === "pending").length }, "Proposals generated");
+        }
         logger.info({ anomaly_count: result.anomaly_count, status: result.status }, "Daily inspection completed");
       } catch (err) {
         logger.error({ err }, "Daily inspection failed");
@@ -41,7 +48,14 @@ async function runNow(pool, logger) {
   logger.info("Daily inspection started (manual)");
   try {
     const result = await engine.runInspection(pool);
-    await persistResult(pool, result, logger);
+    const inspectionId = await persistResult(pool, result, logger);
+    if (inspectionId && result.anomalies.length) {
+      const generated = proposals.generateProposals(result.anomalies);
+      const persisted = await proposals.persistProposals(pool, inspectionId, generated);
+      await proposals.autoExecuteLowMedium(pool, persisted);
+      result.proposals = persisted;
+      logger.info({ proposals: persisted.length }, "Proposals generated (manual)");
+    }
     logger.info({ anomaly_count: result.anomaly_count, status: result.status }, "Daily inspection completed (manual)");
     return result;
   } catch (err) {
@@ -51,7 +65,7 @@ async function runNow(pool, logger) {
 }
 
 async function persistResult(pool, result, logger) {
-  if (!pool || result.status === "skipped") return;
+  if (!pool || result.status === "skipped") return null;
 
   const client = await pool.connect();
   try {
@@ -73,11 +87,12 @@ async function persistResult(pool, result, logger) {
     const inspectionId = inspRow.rows[0].id;
 
     for (const a of result.anomalies) {
-      await client.query(
+      const aRow = await client.query(
         `INSERT INTO anta_daily.agent_anomalies
          (inspection_id, type, severity, title, description,
           metric_current, metric_previous, change_pct, suggested_action)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id`,
         [
           inspectionId,
           a.type,
@@ -90,9 +105,11 @@ async function persistResult(pool, result, logger) {
           a.suggested_action,
         ]
       );
+      a.id = aRow.rows[0].id;
     }
 
     await client.query("COMMIT");
+    return inspectionId;
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     if (err.code === "42P01") {
@@ -100,6 +117,7 @@ async function persistResult(pool, result, logger) {
     } else {
       throw err;
     }
+    return null;
   } finally {
     client.release();
   }

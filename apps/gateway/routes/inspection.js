@@ -161,6 +161,122 @@ function register(app, ctx) {
     },
   );
 
+  // ── GET /api/agent/proposals ── approval queue ────────────────────
+  app.get(
+    "/api/agent/proposals",
+    requirePermission("analysis"),
+    async (req, res, next) => {
+      try {
+        const status = req.query.status || "all";
+        const limit = Math.min(100, parsePositiveInt(req.query.limit, 50));
+        const pool = ctx.getPool();
+        const whereClause = status === "all" ? "" : "WHERE p.status = $3";
+        const params = status === "all" ? [limit, 0] : [limit, 0, status];
+        const { rows } = await bestEffort(
+          pool,
+          `SELECT p.id, p.anomaly_id, p.inspection_id, p.risk_level,
+                  p.action_type, p.title, p.description, p.proposed_action,
+                  p.status, p.decided_at, p.decided_by, p.reject_reason,
+                  p.execution_result, p.created_at
+             FROM anta_daily.agent_proposals p
+             ${whereClause}
+            ORDER BY
+              CASE p.status WHEN 'pending' THEN 0 ELSE 1 END,
+              p.created_at DESC
+            LIMIT $1 OFFSET $2`,
+          params,
+        );
+        return res.json({ ok: true, items: rows });
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
+  // ── GET /api/agent/proposals/pending ── count + list of pending ───
+  app.get(
+    "/api/agent/proposals/pending",
+    requirePermission("analysis"),
+    async (_req, res, next) => {
+      try {
+        const pool = ctx.getPool();
+        const { rows } = await bestEffort(
+          pool,
+          `SELECT id, anomaly_id, inspection_id, risk_level,
+                  action_type, title, description, proposed_action,
+                  status, created_at
+             FROM anta_daily.agent_proposals
+            WHERE status = 'pending'
+            ORDER BY created_at DESC`,
+          [],
+        );
+        return res.json({ ok: true, count: rows.length, items: rows });
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
+  // ── POST /api/agent/proposals/:id/approve ── approve a proposal ──
+  app.post(
+    "/api/agent/proposals/:id/approve",
+    requireAdmin,
+    express.json({ limit: "64kb" }),
+    async (req, res, next) => {
+      try {
+        const id = parsePositiveInt(req.params.id, 0);
+        if (!id) return res.status(400).json({ ok: false, message: "invalid id" });
+
+        const pool = ctx.getPool();
+        const { rows } = await pool.query(
+          `UPDATE anta_daily.agent_proposals
+              SET status = 'approved', decided_at = now(), decided_by = $2
+            WHERE id = $1 AND status = 'pending'
+            RETURNING id`,
+          [id, req.user?.username || "admin"],
+        );
+        if (!rows.length) {
+          return res.status(404).json({ ok: false, message: "proposal not found or not pending" });
+        }
+
+        const proposalService = require("../services/inspection/proposals");
+        const result = await proposalService.executeProposal(pool, id);
+        return res.json({ ok: true, proposal_id: id, execution: result });
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
+  // ── POST /api/agent/proposals/:id/reject ── reject a proposal ────
+  app.post(
+    "/api/agent/proposals/:id/reject",
+    requireAdmin,
+    express.json({ limit: "64kb" }),
+    async (req, res, next) => {
+      try {
+        const id = parsePositiveInt(req.params.id, 0);
+        if (!id) return res.status(400).json({ ok: false, message: "invalid id" });
+
+        const reason = req.body?.reason || "";
+        const pool = ctx.getPool();
+        const { rows } = await pool.query(
+          `UPDATE anta_daily.agent_proposals
+              SET status = 'rejected', decided_at = now(), decided_by = $2, reject_reason = $3
+            WHERE id = $1 AND status = 'pending'
+            RETURNING id`,
+          [id, req.user?.username || "admin", reason],
+        );
+        if (!rows.length) {
+          return res.status(404).json({ ok: false, message: "proposal not found or not pending" });
+        }
+        return res.json({ ok: true, proposal_id: id });
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
   // ── GET /api/agent/activity ── merged timeline ────────────────────
   app.get(
     "/api/agent/activity",
@@ -170,8 +286,8 @@ function register(app, ctx) {
         const days = Math.min(30, parsePositiveInt(req.query.days, 7));
         const pool = ctx.getPool();
 
-        // Two queries in parallel, both tolerate missing tables
-        const [runsResult, inspResult] = await Promise.all([
+        // Three queries in parallel, all tolerate missing tables
+        const [runsResult, inspResult, proposalResult] = await Promise.all([
           bestEffort(
             pool,
             `SELECT id, created_at, question AS summary
@@ -185,6 +301,15 @@ function register(app, ctx) {
             `SELECT id, created_at, summary, anomaly_count
                FROM anta_daily.agent_inspections
               WHERE created_at >= NOW() - MAKE_INTERVAL(days => $1)
+              ORDER BY created_at DESC`,
+            [days],
+          ),
+          bestEffort(
+            pool,
+            `SELECT id, created_at, title AS summary, status, risk_level, action_type
+               FROM anta_daily.agent_proposals
+              WHERE created_at >= NOW() - MAKE_INTERVAL(days => $1)
+                AND status IN ('approved', 'executed', 'rejected')
               ORDER BY created_at DESC`,
             [days],
           ),
@@ -206,6 +331,16 @@ function register(app, ctx) {
             created_at: row.created_at,
             summary: row.summary || "",
             anomaly_count: row.anomaly_count ?? 0,
+          });
+        }
+        for (const row of proposalResult.rows) {
+          items.push({
+            type: "proposal",
+            id: row.id,
+            created_at: row.created_at,
+            summary: row.summary || "",
+            status: row.status,
+            risk_level: row.risk_level,
           });
         }
         // Sort merged timeline descending by created_at
