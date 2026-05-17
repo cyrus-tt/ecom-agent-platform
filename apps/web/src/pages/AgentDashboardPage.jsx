@@ -446,7 +446,7 @@ function actionTypeLabel(type) {
   return map[type] || type;
 }
 
-function ApprovalQueue({ proposals, loading, onApprove, onReject, onRefresh }) {
+function ApprovalQueue({ proposals, loading, onApprove, onReject, onBatchApprove, onRefresh }) {
   const { isAdmin } = useAuth();
   const [rejectModal, setRejectModal] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -493,6 +493,17 @@ function ApprovalQueue({ proposals, loading, onApprove, onReject, onRefresh }) {
     <div className="agent-dash-proposals">
       {pending.length > 0 && (
         <div className="agent-dash-proposals-pending">
+          {isAdmin && pending.length > 1 && (
+            <div className="agent-dash-proposal-batch">
+              <Button
+                type="primary"
+                icon={<CheckOutlined />}
+                onClick={onBatchApprove}
+              >
+                全部批准 ({pending.length})
+              </Button>
+            </div>
+          )}
           {pending.map((p) => (
             <div key={p.id} className="agent-dash-proposal-card pending">
               <div className="agent-dash-proposal-header">
@@ -825,6 +836,18 @@ export default function AgentDashboardPage() {
     }
   }
 
+  async function handleBatchApprove() {
+    try {
+      const resp = await http.post("/api/agent/proposals/batch-approve");
+      message.success(`已批准并执行 ${resp.data?.approved || 0} 条建议`);
+      void fetchProposals();
+      void fetchEffects();
+      void fetchActivities();
+    } catch (err) {
+      message.error(errorMessage(err, "批量批准失败"));
+    }
+  }
+
   async function handleTriggerInspection() {
     setTriggerLoading(true);
     try {
@@ -885,6 +908,7 @@ export default function AgentDashboardPage() {
           loading={proposalsLoading}
           onApprove={handleApproveProposal}
           onReject={handleRejectProposal}
+          onBatchApprove={handleBatchApprove}
           onRefresh={fetchProposals}
         />
       </Card>

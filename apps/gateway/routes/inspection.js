@@ -296,6 +296,38 @@ function register(app, ctx) {
     },
   );
 
+  // ── POST /api/agent/proposals/batch-approve ── approve all pending ─
+  app.post(
+    "/api/agent/proposals/batch-approve",
+    requireAdmin,
+    express.json({ limit: "64kb" }),
+    async (req, res, next) => {
+      try {
+        const pool = ctx.getPool();
+        const { rows } = await pool.query(
+          `UPDATE anta_daily.agent_proposals
+              SET status = 'approved', decided_at = now(), decided_by = $1
+            WHERE status = 'pending'
+            RETURNING id`,
+          [req.user?.username || "admin"],
+        );
+        if (!rows.length) {
+          return res.json({ ok: true, approved: 0, results: [] });
+        }
+
+        const proposalService = require("../services/inspection/proposals");
+        const results = [];
+        for (const row of rows) {
+          const result = await proposalService.executeProposal(pool, row.id);
+          results.push({ id: row.id, result });
+        }
+        return res.json({ ok: true, approved: rows.length, results });
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
   // ── GET /api/agent/effects/summary ── aggregate effectiveness ──────
   app.get(
     "/api/agent/effects/summary",
