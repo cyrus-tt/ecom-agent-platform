@@ -24,6 +24,7 @@
 | ④ | **GitHub main 统一基线** | ✅ done（5/16） | 本地 `main` 与 `origin/main` 同步到 `b23ce7d` |
 | ⑤ | **Mac mini 大升级准备** | 🟢 ready | 在 Mac mini 从 GitHub 最新 `main` 拉取后，新开独立升级分支开发 |
 | ⑥ | **F-CHANNEL-TOP20** 渠道 Top 20 板块业务逻辑调整 | ⚪ 暂搁置 | 大升级规划时重新评估优先级 |
+| ⑦ | **F-SEMANTIC-LAYER** 语义模型动态查询 | 🔵 in-progress | Phase A-C 完成（YAML+NL2SQL+工具+阈值外部化），待 Windows 验收 + 准确率调优 |
 
 ### 🚨 进行中风险登记（每次开工必看）
 
