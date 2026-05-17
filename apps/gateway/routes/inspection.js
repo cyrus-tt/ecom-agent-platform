@@ -75,6 +75,30 @@ function register(app, ctx) {
     },
   );
 
+  // ── GET /api/agent/channel-trend ── 7-day GMV sparkline data ────────
+  app.get(
+    "/api/agent/channel-trend",
+    requirePermission("analysis"),
+    async (req, res, next) => {
+      try {
+        const channel = String(req.query.channel || "").trim();
+        if (!channel) {
+          return res.status(400).json({ ok: false, message: "channel is required" });
+        }
+        const anchorDate = String(req.query.anchor_date || "").trim() || undefined;
+        const { queryChannelTrend, CHANNEL_MAP } = require("../services/inspection/channelTrend");
+        if (!CHANNEL_MAP.has(channel)) {
+          return res.status(400).json({ ok: false, message: `unknown channel: ${channel}` });
+        }
+        const pool = ctx.getPool();
+        const result = await queryChannelTrend(pool, channel, anchorDate);
+        return res.json({ ok: true, channel, data: result.data });
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
   // ── GET /api/agent/events ── SSE stream for real-time notifications ─
   app.get(
     "/api/agent/events",

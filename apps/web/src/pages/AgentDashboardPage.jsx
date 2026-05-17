@@ -28,7 +28,8 @@ import {
   Tooltip,
   message,
 } from "antd";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import ReactECharts from "echarts-for-react";
 import { useAuth } from "../auth/AuthContext";
 import http, { errorMessage } from "../api/http";
 
@@ -214,10 +215,134 @@ function BriefingCard({ inspection, loading, onTrigger, triggerLoading, digestMe
 }
 
 /* ------------------------------------------------------------------ */
+/*  Visualization: Sparkline + Reasoning Chain                         */
+/* ------------------------------------------------------------------ */
+
+function AnomalySparkline({ data, anchorDate }) {
+  if (!data || data.length === 0) return null;
+
+  const option = {
+    grid: { left: 0, right: 0, top: 8, bottom: 0, containLabel: false },
+    xAxis: { type: "category", show: false, data: data.map((d) => d.date) },
+    yAxis: { type: "value", show: false, min: "dataMin" },
+    tooltip: {
+      trigger: "axis",
+      formatter: (params) => {
+        const p = params[0];
+        return `${p.name}<br/>GMV: &yen;${Number(p.value).toLocaleString("zh-CN")}`;
+      },
+    },
+    series: [
+      {
+        type: "line",
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 2, color: "#1677ff" },
+        areaStyle: {
+          color: {
+            type: "linear",
+            x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: "rgba(22,119,255,0.15)" },
+              { offset: 1, color: "rgba(22,119,255,0.02)" },
+            ],
+          },
+        },
+        data: data.map((d) => d.gmv),
+        markPoint: anchorDate
+          ? {
+              symbol: "circle",
+              symbolSize: 8,
+              data: [
+                {
+                  xAxis: anchorDate,
+                  yAxis: data.find((d) => d.date === anchorDate)?.gmv || 0,
+                  itemStyle: { color: "#cf1322" },
+                },
+              ],
+            }
+          : undefined,
+      },
+    ],
+  };
+
+  return (
+    <div className="agent-dash-sparkline">
+      <div className="agent-dash-sparkline-label">7 日 GMV 趋势（红点为异常日）</div>
+      <ReactECharts option={option} style={{ height: 120 }} notMerge lazyUpdate />
+    </div>
+  );
+}
+
+const THRESHOLDS = {
+  sales_drop_dod: { label: "日环比检测", warn: 10, crit: 25, unit: "%" },
+  sales_drop_wow: { label: "周环比检测", warn: 15, crit: 30, unit: "%" },
+  zero_sales_sku: { label: "零销量SKU检测", warn: 20, crit: null, unit: "个" },
+  new_product_underperform: { label: "新品表现检测", warn: 7, crit: null, unit: "天" },
+};
+
+function ReasoningChain({ anomaly }) {
+  const th = THRESHOLDS[anomaly?.type];
+  if (!th) return null;
+
+  const steps = [th.label];
+
+  if (anomaly.type === "sales_drop_dod" || anomaly.type === "sales_drop_wow") {
+    steps.push(`阈值: >${th.warn}% 报 warning${th.crit ? `, >${th.crit}% 报 critical` : ""}`);
+    const pct = anomaly.change_pct != null ? `${Number(anomaly.change_pct).toFixed(1)}%` : "-";
+    steps.push(`实际: ${pct}`);
+  } else if (anomaly.type === "zero_sales_sku") {
+    steps.push(`阈值: 零销SKU > ${th.warn}${th.unit}`);
+    steps.push(`实际: ${anomaly.metric_current ?? "-"}${th.unit}`);
+  } else if (anomaly.type === "new_product_underperform") {
+    steps.push(`阈值: 上架 >${th.warn}天仍零销`);
+    steps.push(`实际: ${anomaly.metric_current ?? "-"} 个SKU`);
+  }
+
+  const sLabel = anomaly.severity === "critical" ? "严重" : anomaly.severity === "warning" ? "警告" : "信息";
+  steps.push(`判定: ${sLabel}`);
+
+  return (
+    <div className="agent-dash-reasoning">
+      <div className="agent-dash-reasoning-steps">
+        {steps.map((step, i) => (
+          <span key={i} className="agent-dash-reasoning-step">
+            {step}
+            {i < steps.length - 1 && <span className="agent-dash-reasoning-arrow"> → </span>}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function extractChannelCode(description) {
+  const match = description?.match(/\((\w+)\)/);
+  return match ? match[1] : null;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Section B: Anomaly List                                            */
 /* ------------------------------------------------------------------ */
 
 function AnomalyList({ anomalies, onAcknowledge }) {
+  const [trendCache, setTrendCache] = useState({});
+  const fetchedRef = useRef(new Set());
+
+  const fetchTrend = useCallback(async (channelCode, anchorDate) => {
+    const key = `${channelCode}_${anchorDate || ""}`;
+    if (fetchedRef.current.has(key)) return;
+    fetchedRef.current.add(key);
+    try {
+      const params = { channel: channelCode, _t: Date.now() };
+      if (anchorDate) params.anchor_date = anchorDate;
+      const resp = await http.get("/api/agent/channel-trend", { params });
+      setTrendCache((prev) => ({ ...prev, [key]: resp.data?.data || [] }));
+    } catch {
+      setTrendCache((prev) => ({ ...prev, [key]: [] }));
+    }
+  }, []);
+
   if (!anomalies || anomalies.length === 0) {
     return (
       <div className="agent-dash-empty">
@@ -229,6 +354,20 @@ function AnomalyList({ anomalies, onAcknowledge }) {
   const sorted = [...anomalies].sort(
     (a, b) => severityOrder(a.severity) - severityOrder(b.severity)
   );
+
+  function handleCollapseChange(keys) {
+    for (const key of keys) {
+      const idx = Number(key);
+      const item = sorted[idx];
+      if (!item) continue;
+      if (item.type !== "sales_drop_dod" && item.type !== "sales_drop_wow") continue;
+      const ch = extractChannelCode(item.description);
+      if (ch) {
+        const anchor = item.created_at ? item.created_at.slice(0, 10) : undefined;
+        fetchTrend(ch, anchor);
+      }
+    }
+  }
 
   const items = sorted.map((item, idx) => ({
     key: String(idx),
@@ -270,6 +409,16 @@ function AnomalyList({ anomalies, onAcknowledge }) {
             )}
           </div>
         )}
+        <ReasoningChain anomaly={item} />
+        {(() => {
+          const ch = extractChannelCode(item.description);
+          if (!ch || (item.type !== "sales_drop_dod" && item.type !== "sales_drop_wow")) return null;
+          const anchor = item.created_at ? item.created_at.slice(0, 10) : "";
+          const key = `${ch}_${anchor}`;
+          const data = trendCache[key];
+          if (!data) return null;
+          return <AnomalySparkline data={data} anchorDate={anchor} />;
+        })()}
         {item.suggested_action && (
           <div className="agent-dash-anomaly-action">
             <strong>建议操作：</strong> {item.suggested_action}
@@ -296,6 +445,7 @@ function AnomalyList({ anomalies, onAcknowledge }) {
       bordered={false}
       expandIconPosition="end"
       className="agent-dash-anomaly-collapse"
+      onChange={handleCollapseChange}
     />
   );
 }

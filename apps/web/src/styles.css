@@ -1975,3 +1975,44 @@ body {
   margin-top: 6px;
   padding-left: 4px;
 }
+
+/* ── Reasoning Chain ─────────────────────────────────────────────── */
+
+.agent-dash-reasoning {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: #f6f8fc;
+  border-radius: 8px;
+  border-left: 3px solid #91caff;
+}
+
+.agent-dash-reasoning-steps {
+  font-size: 13px;
+  color: #333;
+  line-height: 1.8;
+}
+
+.agent-dash-reasoning-step {
+  display: inline;
+}
+
+.agent-dash-reasoning-arrow {
+  color: #bbb;
+  margin: 0 2px;
+}
+
+/* ── Sparkline ───────────────────────────────────────────────────── */
+
+.agent-dash-sparkline {
+  margin-top: 12px;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #fafafa;
+}
+
+.agent-dash-sparkline-label {
+  font-size: 12px;
+  color: #8c8c8c;
+  margin-bottom: 4px;
+}
