@@ -6,6 +6,7 @@ const proposals = require("./proposals");
 const effects = require("./effects");
 const digest = require("./digest");
 const aiAnalysis = require("./aiAnalysis");
+const eventBus = require("./eventBus");
 
 let task = null;
 
@@ -48,6 +49,14 @@ function start(pool, logger) {
         if (briefing) {
           logger.info({ digest_length: briefing.length }, "Daily digest generated");
         }
+        // Push real-time notifications to connected browsers
+        eventBus.notifyInspectionComplete(result);
+        for (const a of result.anomalies) {
+          if (a.severity === "critical") eventBus.notifyCriticalAnomaly(a);
+        }
+        const pendingCount = (result.proposals || []).filter(p => p.status === "pending").length;
+        if (pendingCount > 0) eventBus.notifyProposalPending(pendingCount);
+
         logger.info({ anomaly_count: result.anomaly_count, status: result.status }, "Daily inspection completed");
       } catch (err) {
         logger.error({ err }, "Daily inspection failed");

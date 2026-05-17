@@ -863,6 +863,35 @@ export default function AgentDashboardPage() {
     void fetchHistory();
   }, [fetchLatest, fetchProposals, fetchEffects, fetchActivities, fetchHistory]);
 
+  // SSE: real-time updates from Agent
+  useEffect(() => {
+    let es;
+    try {
+      es = new EventSource("/api/agent/events");
+      es.addEventListener("inspection_complete", () => {
+        message.info("Agent 巡检已完成，正在刷新...");
+        void fetchLatest();
+        void fetchProposals();
+        void fetchActivities();
+        void fetchHistory();
+      });
+      es.addEventListener("critical_anomaly", (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          message.warning(`严重异常: ${data.title}`);
+        } catch (_) {}
+      });
+      es.addEventListener("proposals_pending", (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          message.info(`${data.count} 条新建议待审批`);
+          void fetchProposals();
+        } catch (_) {}
+      });
+    } catch (_) { /* SSE not supported or endpoint unavailable */ }
+    return () => { if (es) es.close(); };
+  }, [fetchLatest, fetchProposals, fetchActivities, fetchHistory]);
+
   async function handleApproveProposal(id) {
     try {
       await http.post(`/api/agent/proposals/${id}/approve`);

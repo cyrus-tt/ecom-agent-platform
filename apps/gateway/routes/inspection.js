@@ -28,6 +28,28 @@ async function bestEffort(pool, sql, params) {
 function register(app, ctx) {
   const { express, parsePositiveInt } = ctx;
 
+  // ── GET /api/agent/events ── SSE stream for real-time notifications ─
+  app.get(
+    "/api/agent/events",
+    requirePermission("analysis"),
+    (req, res) => {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
+
+      res.write(`event: connected\ndata: ${JSON.stringify({ status: "ok" })}\n\n`);
+
+      const eventBus = require("../services/inspection/eventBus");
+      eventBus.addClient(res);
+
+      req.on("close", () => {
+        // Client cleanup handled inside eventBus.addClient
+      });
+    },
+  );
+
   // ── GET /api/agent/inspections ── paginated list ──────────────────
   app.get(
     "/api/agent/inspections",
