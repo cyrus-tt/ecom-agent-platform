@@ -584,6 +584,89 @@ function ApprovalQueue({ proposals, loading, onApprove, onReject, onRefresh }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Section F: Effect Tracking                                         */
+/* ------------------------------------------------------------------ */
+
+function outcomeColor(outcome) {
+  if (outcome === "improved") return "#52c41a";
+  if (outcome === "worsened") return "#cf1322";
+  return "#999";
+}
+
+function outcomeLabel(outcome) {
+  const map = { improved: "改善", unchanged: "持平", worsened: "恶化", pending: "待评估" };
+  return map[outcome] || outcome;
+}
+
+function EffectTracker({ summary, recentEffects, loading }) {
+  if (loading) return <Spin size="small" />;
+
+  if (!summary || summary.total === 0) {
+    return <Empty description="暂无效果追踪数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+  }
+
+  const successRate = summary.total - summary.pending > 0
+    ? Math.round((summary.improved / (summary.total - summary.pending)) * 100)
+    : 0;
+
+  return (
+    <div className="agent-dash-effects">
+      <div className="agent-dash-effects-summary">
+        <div className="agent-dash-effects-stat">
+          <div className="agent-dash-effects-stat-value" style={{ color: "#52c41a" }}>
+            {successRate}%
+          </div>
+          <div className="agent-dash-effects-stat-label">建议有效率</div>
+        </div>
+        <div className="agent-dash-effects-stat">
+          <div className="agent-dash-effects-stat-value">{summary.improved}</div>
+          <div className="agent-dash-effects-stat-label">改善</div>
+        </div>
+        <div className="agent-dash-effects-stat">
+          <div className="agent-dash-effects-stat-value">{summary.unchanged}</div>
+          <div className="agent-dash-effects-stat-label">持平</div>
+        </div>
+        <div className="agent-dash-effects-stat">
+          <div className="agent-dash-effects-stat-value" style={{ color: "#cf1322" }}>
+            {summary.worsened}
+          </div>
+          <div className="agent-dash-effects-stat-label">恶化</div>
+        </div>
+        <div className="agent-dash-effects-stat">
+          <div className="agent-dash-effects-stat-value" style={{ color: "#999" }}>
+            {summary.pending}
+          </div>
+          <div className="agent-dash-effects-stat-label">待评估</div>
+        </div>
+      </div>
+
+      {recentEffects && recentEffects.length > 0 && (
+        <div className="agent-dash-effects-list">
+          {recentEffects.slice(0, 5).map((e) => (
+            <div key={e.id} className="agent-dash-effect-item">
+              <div className="agent-dash-effect-header">
+                <Tag color={outcomeColor(e.outcome)}>{outcomeLabel(e.outcome)}</Tag>
+                <span className="agent-dash-effect-title">{e.proposal_title}</span>
+              </div>
+              <div className="agent-dash-effect-metrics">
+                <span>{e.baseline_value ?? "-"}</span>
+                <span style={{ margin: "0 6px", color: "#999" }}>→</span>
+                <span style={{ fontWeight: 600 }}>{e.followup_value ?? "-"}</span>
+                {e.change_pct != null && (
+                  <span style={{ marginLeft: 8, color: outcomeColor(e.outcome) }}>
+                    {formatChangePct(e.change_pct)}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main Page Component                                                */
 /* ------------------------------------------------------------------ */
 
@@ -598,6 +681,11 @@ export default function AgentDashboardPage() {
   // Approval queue (Section E)
   const [proposals, setProposals] = useState([]);
   const [proposalsLoading, setProposalsLoading] = useState(true);
+
+  // Effect tracking (Section F)
+  const [effectsSummary, setEffectsSummary] = useState(null);
+  const [recentEffects, setRecentEffects] = useState([]);
+  const [effectsLoading, setEffectsLoading] = useState(true);
 
   // Activity timeline (Section C)
   const [activities, setActivities] = useState([]);
@@ -641,6 +729,26 @@ export default function AgentDashboardPage() {
     }
   }, []);
 
+  const fetchEffects = useCallback(async () => {
+    setEffectsLoading(true);
+    try {
+      const [summaryResp, listResp] = await Promise.all([
+        http.get("/api/agent/effects/summary", { params: { _t: Date.now() } }),
+        http.get("/api/agent/effects", { params: { limit: 10, _t: Date.now() } }),
+      ]);
+      setEffectsSummary(summaryResp.data || null);
+      setRecentEffects(Array.isArray(listResp.data?.items) ? listResp.data.items : []);
+    } catch (err) {
+      if (err?.response?.status !== 404) {
+        message.error(errorMessage(err, "获取效果追踪失败"));
+      }
+      setEffectsSummary(null);
+      setRecentEffects([]);
+    } finally {
+      setEffectsLoading(false);
+    }
+  }, []);
+
   const fetchActivities = useCallback(async () => {
     setActivityLoading(true);
     try {
@@ -680,9 +788,10 @@ export default function AgentDashboardPage() {
   useEffect(() => {
     void fetchLatest();
     void fetchProposals();
+    void fetchEffects();
     void fetchActivities();
     void fetchHistory();
-  }, [fetchLatest, fetchProposals, fetchActivities, fetchHistory]);
+  }, [fetchLatest, fetchProposals, fetchEffects, fetchActivities, fetchHistory]);
 
   async function handleApproveProposal(id) {
     try {
@@ -765,6 +874,29 @@ export default function AgentDashboardPage() {
           onApprove={handleApproveProposal}
           onReject={handleRejectProposal}
           onRefresh={fetchProposals}
+        />
+      </Card>
+
+      {/* Section F: Effect Tracking */}
+      <Card
+        title={
+          <span>
+            <CheckCircleOutlined style={{ marginRight: 8, color: "#52c41a" }} />
+            效果追踪
+            {effectsSummary && effectsSummary.total > 0 && (
+              <Tag color="green" style={{ marginLeft: 8 }}>
+                {effectsSummary.total - effectsSummary.pending} 已评估
+              </Tag>
+            )}
+          </span>
+        }
+        className="agent-dash-card"
+        style={{ marginTop: 16 }}
+      >
+        <EffectTracker
+          summary={effectsSummary}
+          recentEffects={recentEffects}
+          loading={effectsLoading}
         />
       </Card>
 

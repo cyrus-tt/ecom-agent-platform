@@ -277,6 +277,39 @@ function register(app, ctx) {
     },
   );
 
+  // ── GET /api/agent/effects/summary ── aggregate effectiveness ──────
+  app.get(
+    "/api/agent/effects/summary",
+    requirePermission("analysis"),
+    async (_req, res, next) => {
+      try {
+        const effectsService = require("../services/inspection/effects");
+        const pool = ctx.getPool();
+        const summary = await effectsService.getEffectsSummary(pool);
+        return res.json({ ok: true, ...summary });
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
+  // ── GET /api/agent/effects ── recent evaluated effects ───────────
+  app.get(
+    "/api/agent/effects",
+    requirePermission("analysis"),
+    async (req, res, next) => {
+      try {
+        const limit = Math.min(50, parsePositiveInt(req.query.limit, 20));
+        const effectsService = require("../services/inspection/effects");
+        const pool = ctx.getPool();
+        const items = await effectsService.getRecentEffects(pool, limit);
+        return res.json({ ok: true, items });
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
   // ── GET /api/agent/activity ── merged timeline ────────────────────
   app.get(
     "/api/agent/activity",

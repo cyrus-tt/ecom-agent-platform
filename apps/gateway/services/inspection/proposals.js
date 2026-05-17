@@ -209,6 +209,18 @@ async function executeProposal(pool, proposalId) {
       `UPDATE anta_daily.agent_anomalies SET status = 'resolved' WHERE id = $1`,
       [proposal.anomaly_id]
     ).catch(() => {});
+
+    // Record baseline for effect tracking
+    try {
+      const effects = require("./effects");
+      const anomalyResult = await pool.query(
+        `SELECT * FROM anta_daily.agent_anomalies WHERE id = $1`,
+        [proposal.anomaly_id]
+      );
+      if (anomalyResult.rows[0]) {
+        await effects.recordBaseline(pool, proposal, anomalyResult.rows[0]);
+      }
+    } catch (_) { /* effect tracking is best-effort */ }
   }
 
   return result;

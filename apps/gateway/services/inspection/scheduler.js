@@ -3,6 +3,7 @@
 const cron = require("node-cron");
 const engine = require("./engine");
 const proposals = require("./proposals");
+const effects = require("./effects");
 
 let task = null;
 
@@ -25,6 +26,10 @@ function start(pool, logger) {
           const persisted = await proposals.persistProposals(pool, inspectionId, generated);
           await proposals.autoExecuteLowMedium(pool, persisted);
           logger.info({ proposals: persisted.length, pending: persisted.filter(p => p.status === "pending").length }, "Proposals generated");
+        }
+        const evaluated = await effects.evaluatePendingEffects(pool, logger);
+        if (evaluated.length) {
+          logger.info({ evaluated: evaluated.length }, "Effect tracking: evaluated pending outcomes");
         }
         logger.info({ anomaly_count: result.anomaly_count, status: result.status }, "Daily inspection completed");
       } catch (err) {
