@@ -736,6 +736,79 @@ const TOOL_DEFS = [
       return input;
     },
   },
+  {
+    name: "get_agent_status",
+    description: "获取 Agent 巡检状态：最近异常、待审批建议、建议有效率。用于回答'最近有什么异常'、'Agent 做了什么'、'建议有效吗'等问题。",
+    schema: z.object({
+      scope: z.enum(["latest", "proposals", "effects", "all"]).optional().default("all"),
+    }),
+    parameters: {
+      type: "object",
+      properties: {
+        scope: {
+          type: "string",
+          enum: ["latest", "proposals", "effects", "all"],
+          description: "查询范围：latest=最新巡检, proposals=待审批建议, effects=效果追踪, all=全部",
+        },
+      },
+      required: [],
+    },
+    async call(input) {
+      const pool = await reportRepo.getPool();
+      const result = {};
+
+      if (input.scope === "latest" || input.scope === "all") {
+        const inspResult = await pool.query(
+          `SELECT id, run_date, anomaly_count, summary, status, created_at
+             FROM anta_daily.agent_inspections
+            ORDER BY run_date DESC LIMIT 1`
+        ).catch(() => ({ rows: [] }));
+        result.latest_inspection = inspResult.rows[0] || null;
+
+        if (result.latest_inspection) {
+          const anomResult = await pool.query(
+            `SELECT type, severity, title, description, suggested_action
+               FROM anta_daily.agent_anomalies
+              WHERE inspection_id = $1
+              ORDER BY severity DESC`,
+            [result.latest_inspection.id]
+          ).catch(() => ({ rows: [] }));
+          result.anomalies = anomResult.rows;
+        }
+      }
+
+      if (input.scope === "proposals" || input.scope === "all") {
+        const pendingResult = await pool.query(
+          `SELECT id, title, risk_level, action_type, description, created_at
+             FROM anta_daily.agent_proposals
+            WHERE status = 'pending'
+            ORDER BY created_at DESC`
+        ).catch(() => ({ rows: [] }));
+        result.pending_proposals = pendingResult.rows;
+        result.pending_count = pendingResult.rows.length;
+      }
+
+      if (input.scope === "effects" || input.scope === "all") {
+        const effectsResult = await pool.query(
+          `SELECT outcome, count(*)::int AS cnt
+             FROM anta_daily.agent_effects
+            GROUP BY outcome`
+        ).catch(() => ({ rows: [] }));
+        const summary = { improved: 0, unchanged: 0, worsened: 0, pending: 0 };
+        for (const row of effectsResult.rows) {
+          if (summary[row.outcome] !== undefined) summary[row.outcome] = row.cnt;
+        }
+        const evaluated = summary.improved + summary.unchanged + summary.worsened;
+        result.effects_summary = {
+          ...summary,
+          total_evaluated: evaluated,
+          success_rate: evaluated > 0 ? Math.round((summary.improved / evaluated) * 100) : null,
+        };
+      }
+
+      return result;
+    },
+  },
 ];
 
 const TOOL_MAP = new Map(TOOL_DEFS.map((tool) => [tool.name, tool]));
