@@ -2,7 +2,7 @@
 
 > **用途**：跟踪当前开发任务、本周焦点、进行中风险。
 > **维护**：每个任务状态变化时同步；每周一刷新"本周焦点"。
-> **最后更新**：2026-05-16
+> **最后更新**：2026-05-16 (Phase 2B+3 完成)
 
 ---
 
@@ -18,11 +18,12 @@
 
 | # | 任务 | 当前状态 | 一句话 |
 |---|------|---------|--------|
-| ① | **GitHub main 统一基线** | ✅ done（5/16） | 本地 `main` 与 `origin/main` 同步到 `b23ce7d`，所有本地/远端开发分支均已包含进 main |
-| ② | **历史功能分支整合** | ✅ done（5/16） | PR1-12、V2/V3、F-LOGIN、F-PERF、F-CHATBI、调拨、小工具等历史改动已进入 main |
-| ③ | **Mac mini 大升级准备** | 🟢 ready | 在 Mac mini 从 GitHub 最新 `main` 拉取后，新开独立升级分支开发 |
-| ④ | **F-CHANNEL-TOP20** 渠道 Top 20 板块业务逻辑调整 | ⚪ 暂搁置 | 大升级规划时重新评估优先级 |
-| ~~⑤~~ | ~~**F-OUTBOUND-RENAME** GMV → 出库金额~~ | ⚪ **取消** | 不做 |
+| ① | **AI-native Phase 2B: 审批队列** | ✅ done（5/16） | Agent 提案 → 风险分级路由 → 高风险排队等审批，低/中自动执行 |
+| ② | **AI-native Phase 3: 效果追踪** | ✅ done（5/16） | 提案执行后 3 天自动 re-measure，计算有效率闭环 |
+| ③ | **Agent 对话集成巡检工具** | ✅ done（5/16） | 流式 Agent 新增 get_agent_status 工具，可对话查巡检/提案/有效率 |
+| ④ | **GitHub main 统一基线** | ✅ done（5/16） | 本地 `main` 与 `origin/main` 同步到 `b23ce7d` |
+| ⑤ | **Mac mini 大升级准备** | 🟢 ready | 在 Mac mini 从 GitHub 最新 `main` 拉取后，新开独立升级分支开发 |
+| ⑥ | **F-CHANNEL-TOP20** 渠道 Top 20 板块业务逻辑调整 | ⚪ 暂搁置 | 大升级规划时重新评估优先级 |
 
 ### 🚨 进行中风险登记（每次开工必看）
 
@@ -54,6 +55,14 @@
 ---
 
 ## 📋 历史里程碑
+
+### 2026-05-16：AI-native Phase 2B + 3 完成，全路线图开发完毕
+
+- **Phase 2B 审批队列**：`agent_proposals` 表 + 规则引擎 + 风险分级路由 + 前端审批 UI
+- **Phase 3 效果追踪**：`agent_effects` 表 + 基线记录 + 3日后自动评估 + 有效率统计
+- **Agent 对话集成**：流式 Agent 新增 `get_agent_status` 工具，对话时可查巡检/提案/效果
+- 分支：`codex/mac/feat-approval-queue`，已 push origin
+- AI-native 路线图（Phase 1→2A→2B→2C→3）全部开发完成，进入 Windows 验收阶段
 
 ### 2026-05-16：GitHub main 统一与升级基线确认
 
