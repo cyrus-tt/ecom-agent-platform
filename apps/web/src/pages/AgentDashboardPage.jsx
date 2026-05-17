@@ -995,6 +995,41 @@ export default function AgentDashboardPage() {
         />
       </Card>
 
+      {/* Quick Reports */}
+      <Card
+        title={
+          <span>
+            <DownloadOutlined style={{ marginRight: 8, color: "#1677ff" }} />
+            快捷报表
+          </span>
+        }
+        className="agent-dash-card"
+        style={{ marginTop: 16 }}
+      >
+        <Space wrap>
+          <Button
+            icon={<DownloadOutlined />}
+            onClick={() => { window.location.href = "/api/agent/reports/daily-channel"; }}
+          >
+            每日渠道汇总
+          </Button>
+          <Button
+            icon={<DownloadOutlined />}
+            onClick={() => { window.location.href = "/api/agent/reports/weekly-comparison"; }}
+          >
+            周环比对比
+          </Button>
+          {latestInspection?.id && (
+            <Button
+              icon={<DownloadOutlined />}
+              onClick={() => { window.location.href = `/api/agent/inspections/${latestInspection.id}/report`; }}
+            >
+              巡检报告
+            </Button>
+          )}
+        </Space>
+      </Card>
+
       {/* Section B + C: Anomaly List + Activity Timeline */}
       <div className="agent-dash-grid">
         <Card

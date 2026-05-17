@@ -246,6 +246,49 @@ function register(app, ctx) {
     },
   );
 
+  // ── GET /api/agent/reports/daily-channel ── auto-generated channel report
+  app.get(
+    "/api/agent/reports/daily-channel",
+    requirePermission("analysis"),
+    async (_req, res, next) => {
+      try {
+        const scheduled = require("../services/inspection/scheduledReports");
+        const pool = ctx.getPool();
+        const result = await scheduled.generateDailyChannelSummary(pool);
+        if (!result) {
+          return res.status(404).json({ ok: false, message: "no data available" });
+        }
+        const filename = encodeURIComponent(`每日渠道汇总_${result.date}.xlsx`);
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${filename}`);
+        return res.send(result.buffer);
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
+  // ── GET /api/agent/reports/weekly-comparison ── WoW channel comparison
+  app.get(
+    "/api/agent/reports/weekly-comparison",
+    requirePermission("analysis"),
+    async (_req, res, next) => {
+      try {
+        const scheduled = require("../services/inspection/scheduledReports");
+        const pool = ctx.getPool();
+        const result = await scheduled.generateWeeklyComparison(pool);
+        if (!result) {
+          return res.status(404).json({ ok: false, message: "no data available" });
+        }
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent("周环比对比.xlsx")}`);
+        return res.send(result.buffer);
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
   // ── POST /api/admin/inspection/run ── manual trigger ──────────────
   let _inspectionRunning = false;
 
