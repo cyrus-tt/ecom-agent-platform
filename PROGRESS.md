@@ -56,6 +56,15 @@
 
 ## 📋 历史里程碑
 
+### 2026-05-17：AI-native 深化 — 自动报表 + 噪声抑制 + 实时推送
+
+- **自动报告下载**：巡检报告 / 每日渠道汇总 / 周环比对比，一键 Excel
+- **噪声抑制学习**：用户确认异常后自动生成 7 天抑制规则，减少重复提醒
+- **SSE 实时推送**：巡检完成 / 严重异常 / 新建议，即时推送到浏览器
+- **Agent 健康 API**：GET /api/agent/health，系统全局状态摘要
+- **快捷报表区域**：Dashboard 新增一键下载常用报表
+- 分支：`codex/mac/feat-approval-queue`，13 commits，已 push origin
+
 ### 2026-05-16：AI-native Phase 2B + 3 完成，全路线图开发完毕
 
 - **Phase 2B 审批队列**：`agent_proposals` 表 + 规则引擎 + 风险分级路由 + 前端审批 UI
