@@ -28,6 +28,53 @@ async function bestEffort(pool, sql, params) {
 function register(app, ctx) {
   const { express, parsePositiveInt } = ctx;
 
+  // ── GET /api/agent/health ── system-wide Agent status ─────────────
+  app.get(
+    "/api/agent/health",
+    requirePermission("analysis"),
+    async (_req, res, next) => {
+      try {
+        const pool = ctx.getPool();
+        const [inspResult, pendingResult, effectResult] = await Promise.all([
+          bestEffort(pool,
+            `SELECT run_date, anomaly_count, summary, created_at
+               FROM anta_daily.agent_inspections ORDER BY run_date DESC LIMIT 1`, []),
+          bestEffort(pool,
+            `SELECT count(*)::int AS cnt FROM anta_daily.agent_proposals WHERE status = 'pending'`, []),
+          bestEffort(pool,
+            `SELECT
+               count(*) FILTER (WHERE outcome = 'improved')::int AS improved,
+               count(*) FILTER (WHERE outcome != 'pending')::int AS evaluated
+             FROM anta_daily.agent_effects`, []),
+        ]);
+
+        const inspection = inspResult.rows[0] || null;
+        const pendingCount = pendingResult.rows[0]?.cnt || 0;
+        const eff = effectResult.rows[0] || {};
+        const successRate = eff.evaluated > 0 ? Math.round((eff.improved / eff.evaluated) * 100) : null;
+
+        const eventBus = require("../services/inspection/eventBus");
+
+        return res.json({
+          ok: true,
+          agent: {
+            last_inspection: inspection ? {
+              date: inspection.run_date,
+              anomalies: inspection.anomaly_count,
+              summary: inspection.summary,
+              time: inspection.created_at,
+            } : null,
+            pending_proposals: pendingCount,
+            effectiveness: { rate: successRate, evaluated: eff.evaluated || 0 },
+            connected_clients: eventBus.getClientCount(),
+          },
+        });
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
   // ── GET /api/agent/events ── SSE stream for real-time notifications ─
   app.get(
     "/api/agent/events",
