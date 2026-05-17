@@ -756,44 +756,48 @@ const TOOL_DEFS = [
     async call(input) {
       const pool = await reportRepo.getPool();
       const result = {};
+      const safeQuery = (sql, params) => pool.query(sql, params).catch((err) => {
+        if (err.code === "42P01") return { rows: [] };
+        throw err;
+      });
 
       if (input.scope === "latest" || input.scope === "all") {
-        const inspResult = await pool.query(
+        const inspResult = await safeQuery(
           `SELECT id, run_date, anomaly_count, summary, status, created_at
              FROM anta_daily.agent_inspections
             ORDER BY run_date DESC LIMIT 1`
-        ).catch(() => ({ rows: [] }));
+        );
         result.latest_inspection = inspResult.rows[0] || null;
 
         if (result.latest_inspection) {
-          const anomResult = await pool.query(
+          const anomResult = await safeQuery(
             `SELECT type, severity, title, description, suggested_action
                FROM anta_daily.agent_anomalies
               WHERE inspection_id = $1
               ORDER BY severity DESC`,
             [result.latest_inspection.id]
-          ).catch(() => ({ rows: [] }));
+          );
           result.anomalies = anomResult.rows;
         }
       }
 
       if (input.scope === "proposals" || input.scope === "all") {
-        const pendingResult = await pool.query(
+        const pendingResult = await safeQuery(
           `SELECT id, title, risk_level, action_type, description, created_at
              FROM anta_daily.agent_proposals
             WHERE status = 'pending'
             ORDER BY created_at DESC`
-        ).catch(() => ({ rows: [] }));
+        );
         result.pending_proposals = pendingResult.rows;
         result.pending_count = pendingResult.rows.length;
       }
 
       if (input.scope === "effects" || input.scope === "all") {
-        const effectsResult = await pool.query(
+        const effectsResult = await safeQuery(
           `SELECT outcome, count(*)::int AS cnt
              FROM anta_daily.agent_effects
             GROUP BY outcome`
-        ).catch(() => ({ rows: [] }));
+        );
         const summary = { improved: 0, unchanged: 0, worsened: 0, pending: 0 };
         for (const row of effectsResult.rows) {
           if (summary[row.outcome] !== undefined) summary[row.outcome] = row.cnt;

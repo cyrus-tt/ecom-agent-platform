@@ -173,16 +173,16 @@ async function persistProposals(pool, inspectionId, proposals) {
 async function executeProposal(pool, proposalId) {
   if (!pool) return null;
 
+  // Atomic claim: only one caller can transition approved → executed
   const { rows } = await pool.query(
-    `SELECT * FROM anta_daily.agent_proposals WHERE id = $1`,
+    `UPDATE anta_daily.agent_proposals
+        SET status = 'executed'
+      WHERE id = $1 AND status = 'approved'
+      RETURNING *`,
     [proposalId]
   );
   if (!rows.length) return null;
   const proposal = rows[0];
-
-  if (proposal.status !== "approved") {
-    return { error: "proposal not in approved state" };
-  }
 
   const action = typeof proposal.proposed_action === "string"
     ? JSON.parse(proposal.proposed_action)
@@ -200,7 +200,7 @@ async function executeProposal(pool, proposalId) {
   }
 
   await pool.query(
-    `UPDATE anta_daily.agent_proposals SET status = 'executed', execution_result = $2 WHERE id = $1`,
+    `UPDATE anta_daily.agent_proposals SET execution_result = $2 WHERE id = $1`,
     [proposalId, JSON.stringify(result)]
   );
 

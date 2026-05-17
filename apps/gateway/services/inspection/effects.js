@@ -78,7 +78,7 @@ async function evaluatePendingEffects(pool, logger) {
       const followupValue = await measureCurrentMetric(pool, effect);
       if (followupValue === null) continue;
 
-      const changePct = effect.baseline_value && effect.baseline_value !== 0
+      const changePct = (effect.baseline_value != null && effect.baseline_value !== 0)
         ? ((followupValue - effect.baseline_value) / Math.abs(effect.baseline_value)) * 100
         : null;
 
@@ -170,23 +170,24 @@ async function measureNewProductSales(pool, effect) {
     .join(" + ");
 
   const sql = `
-    WITH sku_first_seen AS (
-      SELECT sku, min(sales_date) AS first_date
-        FROM ${SALES_DAILY_TABLE}
-       WHERE ${SKU_FILTER_SQL}
-       GROUP BY sku
-       HAVING min(sales_date) >= (current_date - interval '14 day')::date
-    )
-    SELECT count(*) AS zero_count
-      FROM sku_first_seen f
-      JOIN ${SALES_DAILY_TABLE} d ON d.sku = f.sku
-     WHERE d.sales_date >= f.first_date
-       AND ${SKU_FILTER_SQL}
-     GROUP BY f.sku
-    HAVING sum(${salesSumExpr}) = 0`;
+    SELECT count(*)::int AS zero_count FROM (
+      SELECT f.sku
+        FROM (
+          SELECT sku, min(sales_date) AS first_date
+            FROM ${SALES_DAILY_TABLE}
+           WHERE ${SKU_FILTER_SQL}
+           GROUP BY sku
+           HAVING min(sales_date) >= (current_date - interval '14 day')::date
+        ) f
+        JOIN ${SALES_DAILY_TABLE} d ON d.sku = f.sku
+       WHERE d.sales_date >= f.first_date
+         AND ${SKU_FILTER_SQL}
+       GROUP BY f.sku
+      HAVING sum(${salesSumExpr}) = 0
+    ) sub`;
 
   const { rows } = await pool.query(sql);
-  return rows.length;
+  return rows[0] ? Number(rows[0].zero_count) : 0;
 }
 
 function classifyOutcome(metricType, changePct) {
