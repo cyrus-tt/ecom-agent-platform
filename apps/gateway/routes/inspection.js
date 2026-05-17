@@ -161,7 +161,30 @@ function register(app, ctx) {
     },
   );
 
-  // ── GET /api/agent/digest ── morning briefing message ──���──────────
+  // ── GET /api/agent/inspections/latest/insight ── AI analysis ────────
+  app.get(
+    "/api/agent/inspections/latest/insight",
+    requirePermission("analysis"),
+    async (_req, res, next) => {
+      try {
+        const pool = ctx.getPool();
+        const { rows } = await bestEffort(
+          pool,
+          `SELECT findings->'ai_insight' AS insight
+             FROM anta_daily.agent_inspections
+            WHERE findings->'ai_insight' IS NOT NULL
+            ORDER BY run_date DESC LIMIT 1`,
+          [],
+        );
+        const insight = rows[0]?.insight || null;
+        return res.json({ ok: true, insight });
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
+  // ── GET /api/agent/digest ── morning briefing message ─────────────
   app.get(
     "/api/agent/digest",
     requirePermission("analysis"),

@@ -5,6 +5,7 @@ const engine = require("./engine");
 const proposals = require("./proposals");
 const effects = require("./effects");
 const digest = require("./digest");
+const aiAnalysis = require("./aiAnalysis");
 
 let task = null;
 
@@ -31,6 +32,17 @@ function start(pool, logger) {
         const evaluated = await effects.evaluatePendingEffects(pool, logger);
         if (evaluated.length) {
           logger.info({ evaluated: evaluated.length }, "Effect tracking: evaluated pending outcomes");
+        }
+        // AI analysis (best-effort, non-blocking)
+        if (result.anomalies.length) {
+          const insight = await aiAnalysis.analyzeAnomalies(result.anomalies);
+          if (insight) {
+            await pool.query(
+              `UPDATE anta_daily.agent_inspections SET findings = findings || $2::jsonb WHERE id = $1`,
+              [inspectionId, JSON.stringify({ ai_insight: insight })]
+            ).catch(() => {});
+            logger.info("AI analysis completed");
+          }
         }
         const briefing = await digest.buildDigest(pool);
         if (briefing) {

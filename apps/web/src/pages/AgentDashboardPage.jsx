@@ -94,7 +94,7 @@ function formatChangePct(value) {
 /*  Section A: Today's Briefing                                        */
 /* ------------------------------------------------------------------ */
 
-function BriefingCard({ inspection, loading, onTrigger, triggerLoading, digestMessage }) {
+function BriefingCard({ inspection, loading, onTrigger, triggerLoading, digestMessage, aiInsight }) {
   const { isAdmin } = useAuth();
 
   if (loading) {
@@ -169,7 +169,21 @@ function BriefingCard({ inspection, loading, onTrigger, triggerLoading, digestMe
         <ClockCircleOutlined style={{ marginRight: 6 }} />
         巡检时间：{inspection.created_at ? new Date(inspection.created_at).toLocaleString("zh-CN") : "-"}
       </div>
-      {digestMessage && (
+      {aiInsight && (
+        <div className="agent-dash-briefing-insight">
+          <div className="agent-dash-insight-title">AI Analysis</div>
+          <div>{aiInsight.pattern_summary}</div>
+          {aiInsight.key_insight && <div style={{ marginTop: 4 }}>{aiInsight.key_insight}</div>}
+          {aiInsight.priority_actions?.length > 0 && (
+            <div style={{ marginTop: 4 }}>
+              {aiInsight.priority_actions.map((a, i) => (
+                <div key={i}>• {a}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {digestMessage && !aiInsight && (
         <div className="agent-dash-briefing-digest">
           {digestMessage.split("\n").map((line, i) => (
             <div key={i}>{line || <br />}</div>
@@ -696,6 +710,7 @@ export default function AgentDashboardPage() {
   const [latestLoading, setLatestLoading] = useState(true);
   const [triggerLoading, setTriggerLoading] = useState(false);
   const [digestMessage, setDigestMessage] = useState(null);
+  const [aiInsight, setAiInsight] = useState(null);
 
   // Approval queue (Section E)
   const [proposals, setProposals] = useState([]);
@@ -717,18 +732,21 @@ export default function AgentDashboardPage() {
   const fetchLatest = useCallback(async () => {
     setLatestLoading(true);
     try {
-      const [inspResp, digestResp] = await Promise.all([
+      const [inspResp, digestResp, insightResp] = await Promise.all([
         http.get("/api/agent/inspections/latest", { params: { _t: Date.now() } }),
         http.get("/api/agent/digest", { params: { _t: Date.now() } }).catch(() => ({ data: {} })),
+        http.get("/api/agent/inspections/latest/insight", { params: { _t: Date.now() } }).catch(() => ({ data: {} })),
       ]);
       setLatestInspection(inspResp.data?.inspection || null);
       setDigestMessage(digestResp.data?.message || null);
+      setAiInsight(insightResp.data?.insight || null);
     } catch (err) {
       if (err?.response?.status !== 404) {
         message.error(errorMessage(err, "获取最新巡检失败"));
       }
       setLatestInspection(null);
       setDigestMessage(null);
+      setAiInsight(null);
     } finally {
       setLatestLoading(false);
     }
@@ -879,6 +897,7 @@ export default function AgentDashboardPage() {
         onTrigger={handleTriggerInspection}
         triggerLoading={triggerLoading}
         digestMessage={digestMessage}
+        aiInsight={aiInsight}
       />
 
       {/* Section E: Approval Queue */}

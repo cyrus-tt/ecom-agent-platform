@@ -1675,6 +1675,25 @@ body {
   font-size: 13px;
 }
 
+.agent-dash-briefing-insight {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(114, 46, 209, 0.15), rgba(22, 119, 255, 0.1));
+  border: 1px solid rgba(114, 46, 209, 0.3);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.agent-dash-insight-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: rgba(200, 160, 255, 0.8);
+  margin-bottom: 4px;
+}
+
 .agent-dash-briefing-digest {
   margin-top: 16px;
   padding: 12px 16px;
