@@ -131,6 +131,35 @@ function register(app, ctx) {
     },
   );
 
+  // ── POST /api/agent/anomalies/:id/acknowledge ── mark as expected ──
+  app.post(
+    "/api/agent/anomalies/:id/acknowledge",
+    requirePermission("analysis"),
+    express.json({ limit: "64kb" }),
+    async (req, res, next) => {
+      try {
+        const id = parsePositiveInt(req.params.id, 0);
+        if (!id) return res.status(400).json({ ok: false, message: "invalid id" });
+
+        const reason = req.body?.reason || "acknowledged";
+        const pool = ctx.getPool();
+        const { rows } = await pool.query(
+          `UPDATE anta_daily.agent_anomalies
+              SET status = 'acknowledged'
+            WHERE id = $1 AND status = 'open'
+            RETURNING id`,
+          [id],
+        );
+        if (!rows.length) {
+          return res.status(404).json({ ok: false, message: "anomaly not found or already handled" });
+        }
+        return res.json({ ok: true, anomaly_id: id, status: "acknowledged" });
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
   // ── POST /api/admin/inspection/run ── manual trigger ──────────────
   let _inspectionRunning = false;
 

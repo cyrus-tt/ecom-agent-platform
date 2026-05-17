@@ -198,7 +198,7 @@ function BriefingCard({ inspection, loading, onTrigger, triggerLoading, digestMe
 /*  Section B: Anomaly List                                            */
 /* ------------------------------------------------------------------ */
 
-function AnomalyList({ anomalies }) {
+function AnomalyList({ anomalies, onAcknowledge }) {
   if (!anomalies || anomalies.length === 0) {
     return (
       <div className="agent-dash-empty">
@@ -254,6 +254,17 @@ function AnomalyList({ anomalies }) {
         {item.suggested_action && (
           <div className="agent-dash-anomaly-action">
             <strong>建议操作：</strong> {item.suggested_action}
+          </div>
+        )}
+        {item.id && item.status === "open" && onAcknowledge && (
+          <div style={{ marginTop: 8 }}>
+            <Button
+              size="small"
+              icon={<CheckCircleOutlined />}
+              onClick={() => onAcknowledge(item.id)}
+            >
+              已知悉，标记为已处理
+            </Button>
           </div>
         )}
       </div>
@@ -854,6 +865,16 @@ export default function AgentDashboardPage() {
     }
   }
 
+  async function handleAcknowledgeAnomaly(anomalyId) {
+    try {
+      await http.post(`/api/agent/anomalies/${anomalyId}/acknowledge`);
+      message.success("异常已标记为已处理");
+      void fetchLatest();
+    } catch (err) {
+      message.error(errorMessage(err, "标记失败"));
+    }
+  }
+
   async function handleBatchApprove() {
     try {
       const resp = await http.post("/api/agent/proposals/batch-approve");
@@ -972,7 +993,7 @@ export default function AgentDashboardPage() {
           className="agent-dash-card"
           loading={latestLoading}
         >
-          <AnomalyList anomalies={anomalies} />
+          <AnomalyList anomalies={anomalies} onAcknowledge={handleAcknowledgeAnomaly} />
         </Card>
 
         <Card
