@@ -4,6 +4,7 @@ const cron = require("node-cron");
 const engine = require("./engine");
 const proposals = require("./proposals");
 const effects = require("./effects");
+const digest = require("./digest");
 
 let task = null;
 
@@ -30,6 +31,10 @@ function start(pool, logger) {
         const evaluated = await effects.evaluatePendingEffects(pool, logger);
         if (evaluated.length) {
           logger.info({ evaluated: evaluated.length }, "Effect tracking: evaluated pending outcomes");
+        }
+        const briefing = await digest.buildDigest(pool);
+        if (briefing) {
+          logger.info({ digest_length: briefing.length }, "Daily digest generated");
         }
         logger.info({ anomaly_count: result.anomaly_count, status: result.status }, "Daily inspection completed");
       } catch (err) {

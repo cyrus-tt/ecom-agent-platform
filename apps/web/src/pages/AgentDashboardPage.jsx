@@ -94,7 +94,7 @@ function formatChangePct(value) {
 /*  Section A: Today's Briefing                                        */
 /* ------------------------------------------------------------------ */
 
-function BriefingCard({ inspection, loading, onTrigger, triggerLoading }) {
+function BriefingCard({ inspection, loading, onTrigger, triggerLoading, digestMessage }) {
   const { isAdmin } = useAuth();
 
   if (loading) {
@@ -169,6 +169,13 @@ function BriefingCard({ inspection, loading, onTrigger, triggerLoading }) {
         <ClockCircleOutlined style={{ marginRight: 6 }} />
         巡检时间：{inspection.created_at ? new Date(inspection.created_at).toLocaleString("zh-CN") : "-"}
       </div>
+      {digestMessage && (
+        <div className="agent-dash-briefing-digest">
+          {digestMessage.split("\n").map((line, i) => (
+            <div key={i}>{line || <br />}</div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -677,6 +684,7 @@ export default function AgentDashboardPage() {
   const [latestInspection, setLatestInspection] = useState(null);
   const [latestLoading, setLatestLoading] = useState(true);
   const [triggerLoading, setTriggerLoading] = useState(false);
+  const [digestMessage, setDigestMessage] = useState(null);
 
   // Approval queue (Section E)
   const [proposals, setProposals] = useState([]);
@@ -698,15 +706,18 @@ export default function AgentDashboardPage() {
   const fetchLatest = useCallback(async () => {
     setLatestLoading(true);
     try {
-      const resp = await http.get("/api/agent/inspections/latest", {
-        params: { _t: Date.now() },
-      });
-      setLatestInspection(resp.data?.inspection || null);
+      const [inspResp, digestResp] = await Promise.all([
+        http.get("/api/agent/inspections/latest", { params: { _t: Date.now() } }),
+        http.get("/api/agent/digest", { params: { _t: Date.now() } }).catch(() => ({ data: {} })),
+      ]);
+      setLatestInspection(inspResp.data?.inspection || null);
+      setDigestMessage(digestResp.data?.message || null);
     } catch (err) {
       if (err?.response?.status !== 404) {
         message.error(errorMessage(err, "获取最新巡检失败"));
       }
       setLatestInspection(null);
+      setDigestMessage(null);
     } finally {
       setLatestLoading(false);
     }
@@ -844,6 +855,7 @@ export default function AgentDashboardPage() {
         loading={latestLoading}
         onTrigger={handleTriggerInspection}
         triggerLoading={triggerLoading}
+        digestMessage={digestMessage}
       />
 
       {/* Section E: Approval Queue */}

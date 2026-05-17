@@ -161,6 +161,25 @@ function register(app, ctx) {
     },
   );
 
+  // ── GET /api/agent/digest ── morning briefing message ──���──────────
+  app.get(
+    "/api/agent/digest",
+    requirePermission("analysis"),
+    async (_req, res, next) => {
+      try {
+        const digest = require("../services/inspection/digest");
+        const pool = ctx.getPool();
+        const message = await digest.buildDigest(pool);
+        if (!message) {
+          return res.json({ ok: true, message: null, reason: "no_inspection_today" });
+        }
+        return res.json({ ok: true, message });
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
   // ── GET /api/agent/proposals ── approval queue ────────────────────
   app.get(
     "/api/agent/proposals",

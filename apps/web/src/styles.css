@@ -1675,6 +1675,16 @@ body {
   font-size: 13px;
 }
 
+.agent-dash-briefing-digest {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: rgba(255, 255, 255, 0.85);
+}
+
 .agent-dash-briefing-badges {
   display: flex;
   gap: 8px;
