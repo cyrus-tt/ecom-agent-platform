@@ -4,6 +4,7 @@ import {
   CheckOutlined,
   ClockCircleOutlined,
   CloseOutlined,
+  DownloadOutlined,
   ExclamationCircleOutlined,
   InfoCircleOutlined,
   PlayCircleOutlined,
@@ -165,9 +166,27 @@ function BriefingCard({ inspection, loading, onTrigger, triggerLoading, digestMe
           </span>
         )}
       </div>
-      <div className="agent-dash-briefing-sub">
-        <ClockCircleOutlined style={{ marginRight: 6 }} />
-        巡检时间：{inspection.created_at ? new Date(inspection.created_at).toLocaleString("zh-CN") : "-"}
+      <div className="agent-dash-briefing-sub" style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <span>
+          <ClockCircleOutlined style={{ marginRight: 6 }} />
+          巡检时间：{inspection.created_at ? new Date(inspection.created_at).toLocaleString("zh-CN") : "-"}
+        </span>
+        {inspection.id && (
+          <Button
+            size="small"
+            ghost
+            icon={<DownloadOutlined />}
+            style={{ borderColor: "rgba(255,255,255,0.5)", color: "#fff" }}
+            onClick={() => {
+              const link = document.createElement("a");
+              link.href = `/api/agent/inspections/${inspection.id}/report`;
+              link.download = "";
+              link.click();
+            }}
+          >
+            下载报告
+          </Button>
+        )}
       </div>
       {aiInsight && (
         <div className="agent-dash-briefing-insight">

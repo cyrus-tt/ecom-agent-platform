@@ -226,16 +226,23 @@ async function runInspection(pool) {
   }
 
   try {
-    const anomalies = [];
-    await detectSalesDropDoD(pool, anomalies);
-    await detectSalesDropWoW(pool, anomalies);
-    await detectZeroSalesSku(pool, anomalies);
-    await detectNewProductUnderperform(pool, anomalies);
+    const rawAnomalies = [];
+    await detectSalesDropDoD(pool, rawAnomalies);
+    await detectSalesDropWoW(pool, rawAnomalies);
+    await detectZeroSalesSku(pool, rawAnomalies);
+    await detectNewProductUnderperform(pool, rawAnomalies);
+
+    // Apply learned suppressions
+    const suppressions = require("./suppressions");
+    const activeRules = await suppressions.getActiveSuppressions(pool);
+    const anomalies = suppressions.filterSuppressed(rawAnomalies, activeRules);
+    const suppressed = rawAnomalies.length - anomalies.length;
 
     return {
       run_date: new Date().toISOString().slice(0, 10),
       anomaly_count: anomalies.length,
-      summary: buildSummary(anomalies),
+      suppressed_count: suppressed,
+      summary: buildSummary(anomalies) + (suppressed ? ` (${suppressed} 个已抑制)` : ""),
       anomalies,
     };
   } catch (err) {

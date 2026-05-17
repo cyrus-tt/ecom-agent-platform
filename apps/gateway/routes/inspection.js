@@ -131,6 +131,83 @@ function register(app, ctx) {
     },
   );
 
+  // ── GET /api/agent/inspections/:id/report ── download Excel report ──
+  app.get(
+    "/api/agent/inspections/:id/report",
+    requirePermission("analysis"),
+    async (req, res, next) => {
+      try {
+        const id = parsePositiveInt(req.params.id, 0);
+        if (!id) return res.status(400).json({ ok: false, message: "invalid id" });
+
+        const pool = ctx.getPool();
+        const inspResult = await bestEffort(pool,
+          `SELECT id, run_date, anomaly_count, summary, status, created_at
+             FROM anta_daily.agent_inspections WHERE id = $1`, [id]);
+        const inspection = inspResult.rows[0];
+        if (!inspection) {
+          return res.status(404).json({ ok: false, message: "inspection not found" });
+        }
+
+        const anomResult = await bestEffort(pool,
+          `SELECT type, severity, title, description, metric_current, metric_previous, change_pct, suggested_action, status
+             FROM anta_daily.agent_anomalies WHERE inspection_id = $1 ORDER BY severity DESC`, [id]);
+
+        const propResult = await bestEffort(pool,
+          `SELECT risk_level, action_type, title, description, status
+             FROM anta_daily.agent_proposals WHERE inspection_id = $1 ORDER BY created_at`, [id]);
+
+        const autoReport = require("../services/inspection/autoReport");
+        const buffer = await autoReport.generateReportBuffer(inspection, anomResult.rows, propResult.rows);
+        const filename = encodeURIComponent(`巡检报告_${inspection.run_date}.xlsx`);
+
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${filename}`);
+        return res.send(buffer);
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
+  // ── GET /api/agent/inspections/latest/report ── latest report download
+  app.get(
+    "/api/agent/inspections/latest/report",
+    requirePermission("analysis"),
+    async (_req, res, next) => {
+      try {
+        const pool = ctx.getPool();
+        const inspResult = await bestEffort(pool,
+          `SELECT id, run_date, anomaly_count, summary, status, created_at
+             FROM anta_daily.agent_inspections ORDER BY run_date DESC LIMIT 1`, []);
+        const inspection = inspResult.rows[0];
+        if (!inspection) {
+          return res.status(404).json({ ok: false, message: "no inspections found" });
+        }
+
+        const anomResult = await bestEffort(pool,
+          `SELECT type, severity, title, description, metric_current, metric_previous, change_pct, suggested_action, status
+             FROM anta_daily.agent_anomalies WHERE inspection_id = $1 ORDER BY severity DESC`,
+          [inspection.id]);
+
+        const propResult = await bestEffort(pool,
+          `SELECT risk_level, action_type, title, description, status
+             FROM anta_daily.agent_proposals WHERE inspection_id = $1 ORDER BY created_at`,
+          [inspection.id]);
+
+        const autoReport = require("../services/inspection/autoReport");
+        const buffer = await autoReport.generateReportBuffer(inspection, anomResult.rows, propResult.rows);
+        const filename = encodeURIComponent(`巡检报告_${inspection.run_date}.xlsx`);
+
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${filename}`);
+        return res.send(buffer);
+      } catch (err) {
+        return next(err);
+      }
+    },
+  );
+
   // ── POST /api/agent/anomalies/:id/acknowledge ── mark as expected ──
   app.post(
     "/api/agent/anomalies/:id/acknowledge",
@@ -153,6 +230,15 @@ function register(app, ctx) {
         if (!rows.length) {
           return res.status(404).json({ ok: false, message: "anomaly not found or already handled" });
         }
+
+        // Learn suppression pattern from this acknowledgment
+        const suppressions = require("../services/inspection/suppressions");
+        const anomalyResult = await bestEffort(pool,
+          `SELECT type, severity, title, change_pct FROM anta_daily.agent_anomalies WHERE id = $1`, [id]);
+        if (anomalyResult.rows[0]) {
+          await suppressions.learnFromAcknowledgment(pool, anomalyResult.rows[0], reason);
+        }
+
         return res.json({ ok: true, anomaly_id: id, status: "acknowledged" });
       } catch (err) {
         return next(err);
