@@ -73,7 +73,7 @@ function register(app, ctx) {
         }
         const anomResult = await bestEffort(
           pool,
-          `SELECT id, inspection_id, metric_key, severity, detail, created_at
+          `SELECT id, inspection_id, type, severity, title, description, metric_current, metric_previous, change_pct, suggested_action, status, created_at
              FROM anta_daily.agent_anomalies
             WHERE inspection_id = $1
             ORDER BY severity DESC, id`,
@@ -114,7 +114,7 @@ function register(app, ctx) {
         }
         const anomResult = await bestEffort(
           pool,
-          `SELECT id, inspection_id, metric_key, severity, detail, created_at
+          `SELECT id, inspection_id, type, severity, title, description, metric_current, metric_previous, change_pct, suggested_action, status, created_at
              FROM anta_daily.agent_anomalies
             WHERE inspection_id = $1
             ORDER BY severity DESC, id`,
@@ -148,21 +148,9 @@ function register(app, ctx) {
         }
         _inspectionRunning = true;
         try {
-          // The inspection engine is loaded lazily — it may not exist yet
-          // (another agent is building it). Fail gracefully.
-          let inspection;
-          try {
-            const engine = require("../services/inspection");
-            inspection = await engine.runNow();
-          } catch (err) {
-            if (err.code === "MODULE_NOT_FOUND") {
-              return res.status(501).json({
-                ok: false,
-                message: "inspection engine not available yet",
-              });
-            }
-            throw err;
-          }
+          const engine = require("../services/inspection");
+          const pool = ctx.getPool();
+          const inspection = await engine.runNow(pool, console);
           return res.json({ ok: true, inspection });
         } finally {
           _inspectionRunning = false;

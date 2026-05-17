@@ -160,7 +160,7 @@ function BriefingCard({ inspection, loading, onTrigger, triggerLoading }) {
       </div>
       <div className="agent-dash-briefing-sub">
         <ClockCircleOutlined style={{ marginRight: 6 }} />
-        巡检时间：{inspection.inspected_at ? new Date(inspection.inspected_at).toLocaleString("zh-CN") : "-"}
+        巡检时间：{inspection.created_at ? new Date(inspection.created_at).toLocaleString("zh-CN") : "-"}
       </div>
     </div>
   );
@@ -311,7 +311,7 @@ function HistoryTable({ inspections, loading }) {
   const columns = [
     {
       title: "日期",
-      dataIndex: "inspected_at",
+      dataIndex: "created_at",
       key: "date",
       width: 160,
       render: (val) => (val ? new Date(val).toLocaleDateString("zh-CN") : "-"),

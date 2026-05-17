@@ -171,7 +171,7 @@ async function detectNewProductUnderperform(pool, anomalies) {
     sku_total AS (
       SELECT d.sku,
              f.first_date,
-             (current_date - f.first_date) AS days_since,
+             (current_date - f.first_date)::int AS days_since,
              sum(${salesSumExpr}) AS total_qty
       FROM ${SALES_DAILY_TABLE} d
       JOIN sku_first_seen f ON f.sku = d.sku

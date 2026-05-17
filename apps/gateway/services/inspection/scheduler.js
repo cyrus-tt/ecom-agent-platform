@@ -53,8 +53,11 @@ async function runNow(pool, logger) {
 async function persistResult(pool, result, logger) {
   if (!pool || result.status === "skipped") return;
 
+  const client = await pool.connect();
   try {
-    const inspRow = await pool.query(
+    await client.query("BEGIN");
+
+    const inspRow = await client.query(
       `INSERT INTO anta_daily.agent_inspections (run_date, anomaly_count, summary, findings, status)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id`,
@@ -70,7 +73,7 @@ async function persistResult(pool, result, logger) {
     const inspectionId = inspRow.rows[0].id;
 
     for (const a of result.anomalies) {
-      await pool.query(
+      await client.query(
         `INSERT INTO anta_daily.agent_anomalies
          (inspection_id, type, severity, title, description,
           metric_current, metric_previous, change_pct, suggested_action)
@@ -88,13 +91,17 @@ async function persistResult(pool, result, logger) {
         ]
       );
     }
+
+    await client.query("COMMIT");
   } catch (err) {
-    // Best-effort: tables may not exist yet in dev/fixture mode
+    await client.query("ROLLBACK").catch(() => {});
     if (err.code === "42P01") {
       logger.warn("Inspection tables not found, skipping persist");
     } else {
       throw err;
     }
+  } finally {
+    client.release();
   }
 }
 
