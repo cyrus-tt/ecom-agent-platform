@@ -18,6 +18,14 @@ export const APP_MODULES = [
     description: "日报主表与导出",
   },
   {
+    key: "outlet_assortment",
+    permissionKey: "report_daily",
+    label: "奥莱货盘",
+    path: "/outlet-assortment",
+    menuKey: "/outlet-assortment",
+    description: "奥莱货盘查询与导出",
+  },
+  {
     key: "arrival",
     label: "新品",
     path: "/arrival",
@@ -82,7 +90,9 @@ export function hasModulePermission(auth, moduleKey) {
   if (auth.isAdmin) {
     return true;
   }
-  return Array.isArray(auth.permissions) && auth.permissions.includes(moduleKey);
+  const module = APP_MODULES.find((item) => item.key === moduleKey);
+  const permissionKey = module?.permissionKey || moduleKey;
+  return Array.isArray(auth.permissions) && auth.permissions.includes(permissionKey);
 }
 
 export function getPreferredRoute(auth) {

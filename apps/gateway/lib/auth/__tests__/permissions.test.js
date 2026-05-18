@@ -136,6 +136,11 @@ describe("lib/auth/permissions", () => {
       expect(isRouteAllowedForAccount(userArrival, "/report-daily")).toBe(false);
     });
 
+    it("/outlet-assortment requires report_daily", () => {
+      expect(isRouteAllowedForAccount(userReport, "/outlet-assortment")).toBe(true);
+      expect(isRouteAllowedForAccount(userArrival, "/outlet-assortment")).toBe(false);
+    });
+
     it("/arrival/anything requires arrival", () => {
       expect(isRouteAllowedForAccount(userArrival, "/arrival/foo")).toBe(true);
       expect(isRouteAllowedForAccount(userReport, "/arrival/foo")).toBe(false);

@@ -369,6 +369,58 @@ body {
   background: rgba(250, 140, 22, 0.1) !important;
 }
 
+.outlet-assortment-table .ant-table-thead > tr > th {
+  font-size: 11px;
+}
+
+.outlet-assortment-table .ant-table-thead .outlet-surface-manual {
+  background: linear-gradient(180deg, #f9f0ff 0%, #fcf8ff 100%) !important;
+}
+
+.outlet-assortment-table .ant-table-thead .outlet-surface-inventory {
+  background: linear-gradient(180deg, #eef5ff 0%, #f7fbff 100%) !important;
+}
+
+.outlet-assortment-table .ant-table-thead .outlet-surface-sales {
+  background: linear-gradient(180deg, #fff2e8 0%, #fff8f2 100%) !important;
+}
+
+.outlet-assortment-table .ant-table-thead .outlet-surface-discount {
+  background: linear-gradient(180deg, #f0fff4 0%, #f8fffb 100%) !important;
+}
+
+.outlet-assortment-table .ant-table-tbody .outlet-surface-manual {
+  background: rgba(114, 46, 209, 0.04) !important;
+}
+
+.outlet-assortment-table .ant-table-tbody .outlet-surface-inventory {
+  background: rgba(22, 93, 255, 0.04) !important;
+}
+
+.outlet-assortment-table .ant-table-tbody .outlet-surface-sales {
+  background: rgba(250, 140, 22, 0.05) !important;
+}
+
+.outlet-assortment-table .ant-table-tbody .outlet-surface-discount {
+  background: rgba(82, 196, 26, 0.05) !important;
+}
+
+.outlet-assortment-table .ant-table-tbody > tr:hover > .outlet-surface-manual {
+  background: rgba(114, 46, 209, 0.08) !important;
+}
+
+.outlet-assortment-table .ant-table-tbody > tr:hover > .outlet-surface-inventory {
+  background: rgba(22, 93, 255, 0.08) !important;
+}
+
+.outlet-assortment-table .ant-table-tbody > tr:hover > .outlet-surface-sales {
+  background: rgba(250, 140, 22, 0.1) !important;
+}
+
+.outlet-assortment-table .ant-table-tbody > tr:hover > .outlet-surface-discount {
+  background: rgba(82, 196, 26, 0.1) !important;
+}
+
 .sku-preview-trigger {
   color: #165dff;
   cursor: pointer;

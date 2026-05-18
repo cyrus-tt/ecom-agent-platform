@@ -13,17 +13,17 @@ async function buildDigest(pool) {
 
   const sections = [];
 
-  // 1. Today's inspection summary
+  // 1. Latest inspection summary. The patrol anchors on the latest available
+  // sales date, which may lag behind the database server date.
   const inspResult = await safeQuery(pool,
-    `SELECT anomaly_count, summary, created_at
+    `SELECT id, anomaly_count, summary, created_at
        FROM anta_daily.agent_inspections
-      WHERE run_date = current_date
-      ORDER BY created_at DESC LIMIT 1`
+      ORDER BY run_date DESC, created_at DESC LIMIT 1`
   );
   const inspection = inspResult.rows[0];
 
   if (!inspection) {
-    return null; // No inspection today yet
+    return null;
   }
 
   sections.push(`📊 **今日巡检** (${new Date(inspection.created_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })})`);
@@ -33,10 +33,10 @@ async function buildDigest(pool) {
   const critResult = await safeQuery(pool,
     `SELECT title, change_pct
        FROM anta_daily.agent_anomalies a
-       JOIN anta_daily.agent_inspections i ON i.id = a.inspection_id
-      WHERE i.run_date = current_date AND a.severity = 'critical'
+      WHERE a.inspection_id = $1 AND a.severity = 'critical'
       ORDER BY abs(a.change_pct) DESC NULLS LAST
-      LIMIT 3`
+      LIMIT 3`,
+    [inspection.id]
   );
   if (critResult.rows.length) {
     sections.push("");

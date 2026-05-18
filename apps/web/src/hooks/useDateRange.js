@@ -25,6 +25,7 @@ function buildRange(startText, endText) {
  *   fetchDates: () => Promise<any>,
  *   pickDates?: (data: any) => string[],
  *   pickDefault?: (data: any) => string | undefined,
+ *   pickDefaultRange?: (data: any) => [string, string] | { dateFrom?: string, dateTo?: string },
  *   defaultSpanDays?: number,
  *   enabled?: boolean,
  * }} options
@@ -34,6 +35,7 @@ export function useDateRange(options) {
     fetchDates,
     pickDates = (data) => data?.sales_dates || [],
     pickDefault = (data) => data?.default_sales_date,
+    pickDefaultRange,
     defaultSpanDays = 1,
     enabled = true,
   } = options;
@@ -41,7 +43,31 @@ export function useDateRange(options) {
   const [salesDates, setSalesDates] = useState([]);
   const [appliedRange, setAppliedRange] = useState([]);
   const [draftRange, setDraftRange] = useState([]);
+  const [defaultRange, setDefaultRange] = useState([]);
   const [loaded, setLoaded] = useState(false);
+
+  const resolveDefaultRange = useCallback(
+    (data, list) => {
+      if (typeof pickDefaultRange === "function") {
+        const raw = pickDefaultRange(data);
+        const startText = Array.isArray(raw) ? raw[0] : raw?.dateFrom;
+        const endText = Array.isArray(raw) ? raw[1] : raw?.dateTo;
+        const explicit = buildRange(startText, endText);
+        if (explicit.length) return explicit;
+      }
+
+      const fallback = list[0];
+      const latest = String(pickDefault(data) || fallback || "");
+      if (!latest) return [];
+      const end = toDateValue(latest);
+      let start = end;
+      if (defaultSpanDays > 1 && end) {
+        start = end.subtract(defaultSpanDays - 1, "day");
+      }
+      return start && end ? [start, end] : [];
+    },
+    [defaultSpanDays, pickDefault, pickDefaultRange]
+  );
 
   const { loading, refetch } = useApi(
     () => fetchDates(),
@@ -52,18 +78,13 @@ export function useDateRange(options) {
       onSuccess: (data) => {
         const list = Array.isArray(pickDates(data)) ? pickDates(data) : [];
         setSalesDates(list);
-        const fallback = list[0];
-        const latest = String(pickDefault(data) || fallback || "");
-        if (!latest) {
+        const next = resolveDefaultRange(data, list);
+        if (!next.length) {
+          setDefaultRange([]);
           setLoaded(true);
           return;
         }
-        const end = toDateValue(latest);
-        let start = end;
-        if (defaultSpanDays > 1 && end) {
-          start = end.subtract(defaultSpanDays - 1, "day");
-        }
-        const next = start && end ? [start, end] : [];
+        setDefaultRange(next);
         setAppliedRange(next);
         setDraftRange(next);
         setLoaded(true);
@@ -86,6 +107,11 @@ export function useDateRange(options) {
   }, []);
 
   const reset = useCallback(() => {
+    if (defaultRange.length) {
+      setAppliedRange(defaultRange);
+      setDraftRange(defaultRange);
+      return defaultRange;
+    }
     const latest = salesDates[0];
     if (!latest) return [];
     const end = toDateValue(latest);
@@ -97,7 +123,7 @@ export function useDateRange(options) {
     setAppliedRange(next);
     setDraftRange(next);
     return next;
-  }, [defaultSpanDays, salesDates]);
+  }, [defaultRange, defaultSpanDays, salesDates]);
 
   // 当首次 dates 拉到，且调用方需要立即同步触发数据加载，可以监听 loaded
   useEffect(() => {

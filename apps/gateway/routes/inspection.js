@@ -37,7 +37,7 @@ function register(app, ctx) {
         const pool = ctx.getPool();
         const [inspResult, pendingResult, effectResult] = await Promise.all([
           bestEffort(pool,
-            `SELECT run_date, anomaly_count, summary, created_at
+            `SELECT to_char(run_date, 'YYYY-MM-DD') AS run_date, anomaly_count, summary, created_at
                FROM anta_daily.agent_inspections ORDER BY run_date DESC LIMIT 1`, []),
           bestEffort(pool,
             `SELECT count(*)::int AS cnt FROM anta_daily.agent_proposals WHERE status = 'pending'`, []),
@@ -132,7 +132,7 @@ function register(app, ctx) {
         const pool = ctx.getPool();
         const { rows } = await bestEffort(
           pool,
-          `SELECT id, run_date, anomaly_count, summary, status, created_at
+          `SELECT id, to_char(run_date, 'YYYY-MM-DD') AS run_date, anomaly_count, summary, status, created_at
              FROM anta_daily.agent_inspections
             ORDER BY run_date DESC
             LIMIT $1 OFFSET $2`,
@@ -154,7 +154,7 @@ function register(app, ctx) {
         const pool = ctx.getPool();
         const inspResult = await bestEffort(
           pool,
-          `SELECT id, run_date, anomaly_count, summary, status, created_at
+          `SELECT id, to_char(run_date, 'YYYY-MM-DD') AS run_date, anomaly_count, summary, status, created_at
              FROM anta_daily.agent_inspections
             ORDER BY run_date DESC
             LIMIT 1`,
@@ -196,7 +196,7 @@ function register(app, ctx) {
         const pool = ctx.getPool();
         const inspResult = await bestEffort(
           pool,
-          `SELECT id, run_date, anomaly_count, summary, status, created_at
+          `SELECT id, to_char(run_date, 'YYYY-MM-DD') AS run_date, anomaly_count, summary, status, created_at
              FROM anta_daily.agent_inspections
             WHERE id = $1`,
           [id],
@@ -235,7 +235,7 @@ function register(app, ctx) {
 
         const pool = ctx.getPool();
         const inspResult = await bestEffort(pool,
-          `SELECT id, run_date, anomaly_count, summary, status, created_at
+          `SELECT id, to_char(run_date, 'YYYY-MM-DD') AS run_date, anomaly_count, summary, status, created_at
              FROM anta_daily.agent_inspections WHERE id = $1`, [id]);
         const inspection = inspResult.rows[0];
         if (!inspection) {
@@ -271,7 +271,7 @@ function register(app, ctx) {
       try {
         const pool = ctx.getPool();
         const inspResult = await bestEffort(pool,
-          `SELECT id, run_date, anomaly_count, summary, status, created_at
+          `SELECT id, to_char(run_date, 'YYYY-MM-DD') AS run_date, anomaly_count, summary, status, created_at
              FROM anta_daily.agent_inspections ORDER BY run_date DESC LIMIT 1`, []);
         const inspection = inspResult.rows[0];
         if (!inspection) {
@@ -648,7 +648,7 @@ function register(app, ctx) {
         const [runsResult, inspResult, proposalResult] = await Promise.all([
           bestEffort(
             pool,
-            `SELECT id, created_at, question AS summary
+            `SELECT id, created_at, task_name AS summary, status
                FROM anta_daily.agent_runs
               WHERE created_at >= NOW() - MAKE_INTERVAL(days => $1)
               ORDER BY created_at DESC`,
@@ -680,6 +680,7 @@ function register(app, ctx) {
             id: row.id,
             created_at: row.created_at,
             summary: row.summary || "",
+            status: row.status,
           });
         }
         for (const row of inspResult.rows) {

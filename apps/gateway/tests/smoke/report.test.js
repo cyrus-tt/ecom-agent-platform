@@ -43,4 +43,17 @@ describe("smoke: report endpoints routing + auth", () => {
     expect(res.status).not.toBe(403);
     expect(res.status).not.toBe(404);
   });
+
+  it("GET /api/outlet-assortment/dates without cookie returns 401", async () => {
+    const res = await agent.get("/api/outlet-assortment/dates");
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /api/outlet-assortment/dates with permitted user reaches handler (2xx or 5xx, NOT 404/403)", async () => {
+    const { cookie } = await login(agent, "smoke-user", "smoke-user-pass");
+    const res = await agent.get("/api/outlet-assortment/dates").set("Cookie", cookie);
+    expect(res.status).not.toBe(404);
+    expect(res.status).not.toBe(403);
+    expect([200, 500, 502, 503]).toContain(res.status);
+  });
 });

@@ -92,6 +92,20 @@ function formatChangePct(value) {
   return `${sign}${num.toFixed(1)}%`;
 }
 
+function formatSqlDate(value) {
+  if (!value) return undefined;
+  const raw = String(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, "0");
+    const day = String(parsed.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  return raw.slice(0, 10);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Section A: Today's Briefing                                        */
 /* ------------------------------------------------------------------ */
@@ -363,7 +377,7 @@ function AnomalyList({ anomalies, onAcknowledge }) {
       if (item.type !== "sales_drop_dod" && item.type !== "sales_drop_wow") continue;
       const ch = extractChannelCode(item.description);
       if (ch) {
-        const anchor = item.created_at ? item.created_at.slice(0, 10) : undefined;
+        const anchor = formatSqlDate(item.run_date || item.anchor_date || item.created_at);
         fetchTrend(ch, anchor);
       }
     }
@@ -917,7 +931,15 @@ export default function AgentDashboardPage() {
         http.get("/api/agent/digest", { params: { _t: Date.now() } }).catch(() => ({ data: {} })),
         http.get("/api/agent/inspections/latest/insight", { params: { _t: Date.now() } }).catch(() => ({ data: {} })),
       ]);
-      setLatestInspection(inspResp.data?.inspection || null);
+      const inspection = inspResp.data?.inspection || null;
+      const rawAnomalies = Array.isArray(inspResp.data?.anomalies)
+        ? inspResp.data.anomalies
+        : (Array.isArray(inspection?.anomalies) ? inspection.anomalies : []);
+      const anomalies = rawAnomalies.map((item) => ({
+        ...item,
+        run_date: item.run_date || inspection?.run_date,
+      }));
+      setLatestInspection(inspection ? { ...inspection, anomalies } : null);
       setDigestMessage(digestResp.data?.message || null);
       setAiInsight(insightResp.data?.insight || null);
     } catch (err) {
@@ -975,7 +997,10 @@ export default function AgentDashboardPage() {
       const resp = await http.get("/api/agent/activity", {
         params: { days: 7, _t: Date.now() },
       });
-      setActivities(Array.isArray(resp.data?.activities) ? resp.data.activities : []);
+      const items = Array.isArray(resp.data?.activities)
+        ? resp.data.activities
+        : (Array.isArray(resp.data?.items) ? resp.data.items : []);
+      setActivities(items);
     } catch (err) {
       if (err?.response?.status !== 404) {
         message.error(errorMessage(err, "获取活动记录失败"));
@@ -992,9 +1017,10 @@ export default function AgentDashboardPage() {
       const resp = await http.get("/api/agent/inspections", {
         params: { limit: 10, _t: Date.now() },
       });
-      setHistoryInspections(
-        Array.isArray(resp.data?.inspections) ? resp.data.inspections : []
-      );
+      const items = Array.isArray(resp.data?.inspections)
+        ? resp.data.inspections
+        : (Array.isArray(resp.data?.items) ? resp.data.items : []);
+      setHistoryInspections(items);
     } catch (err) {
       if (err?.response?.status !== 404) {
         message.error(errorMessage(err, "获取历史巡检失败"));

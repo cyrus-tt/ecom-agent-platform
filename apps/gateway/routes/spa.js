@@ -52,6 +52,10 @@ function register(app, ctx) {
     sendReactApp(res);
   });
 
+  app.get(["/outlet-assortment", "/outlet-assortment/"], requirePermission("report_daily"), (_req, res) => {
+    sendReactApp(res);
+  });
+
   app.get(["/analysis", "/analysis/"], requirePermission("analysis"), (_req, res) => {
     sendReactApp(res);
   });

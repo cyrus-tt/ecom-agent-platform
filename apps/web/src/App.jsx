@@ -37,6 +37,7 @@ import DashboardPage from "./pages/DashboardPage";
 import DispatchPage from "./pages/DispatchPage";
 import BiPage from "./pages/BiPage";
 import NoAccessPage from "./pages/NoAccessPage";
+import OutletAssortmentPage from "./pages/OutletAssortmentPage";
 import PortalPage from "./pages/PortalPage";
 import ToolsPage from "./pages/ToolsPage";
 
@@ -48,6 +49,7 @@ const { Text } = Typography;
 const MODULE_ICON_MAP = {
   portal: <HomeOutlined />,
   report_daily: <TableOutlined />,
+  outlet_assortment: <ShopOutlined />,
   arrival: <InboxOutlined />,
   dashboard: <BarChartOutlined />,
   channel_dashboard: <ShopOutlined />,
@@ -234,6 +236,14 @@ function AppShell() {
             element={
               <GuardedElement permission="report_daily">
                 <DailyReportPage />
+              </GuardedElement>
+            }
+          />
+          <Route
+            path="/outlet-assortment"
+            element={
+              <GuardedElement permission="outlet_assortment">
+                <OutletAssortmentPage />
               </GuardedElement>
             }
           />

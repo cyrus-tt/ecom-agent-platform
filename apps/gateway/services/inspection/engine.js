@@ -8,6 +8,36 @@ function gmvExpr(salesQtyKey) {
   return `coalesce(sum(${salesQtyKey} * tag_price), 0)`;
 }
 
+function rowSalesQtyExpr() {
+  return CHANNEL_DASHBOARD_OPTIONS
+    .map((ch) => `coalesce(${ch.salesQtyKey}, 0)`)
+    .join(" + ");
+}
+
+function skuFilterSql(alias = "") {
+  const prefix = alias ? `${alias}.` : "";
+  return `coalesce(${prefix}sku, '') not ilike '%u%' and coalesce(${prefix}sku, '') not ilike '%v%'`;
+}
+
+function formatSqlDate(value) {
+  if (!value) return "";
+  if (value instanceof Date) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+  return String(value).slice(0, 10);
+}
+
+async function getInspectionAnchorDate(pool) {
+  const { rows } = await pool.query(`
+    SELECT max(sales_date) AS anchor_date
+      FROM ${SALES_DAILY_TABLE}
+     WHERE ${SKU_FILTER_SQL}`);
+  return formatSqlDate(rows[0]?.anchor_date);
+}
+
 function classifySeverity(changePct, warnThreshold, critThreshold) {
   const drop = -changePct;
   if (drop >= critThreshold) return "critical";
@@ -17,19 +47,19 @@ function classifySeverity(changePct, warnThreshold, critThreshold) {
 
 // ── Type 1: Day-over-Day sales drop per channel ─────────────────────────────
 
-async function detectSalesDropDoD(pool, anomalies) {
+async function detectSalesDropDoD(pool, anomalies, anchorDate) {
   for (const ch of CHANNEL_DASHBOARD_OPTIONS) {
     const sql = `
       WITH yesterday AS (
         SELECT ${gmvExpr(ch.salesQtyKey)} AS gmv
         FROM ${SALES_DAILY_TABLE}
-        WHERE sales_date = (current_date - interval '1 day')::date
+        WHERE sales_date = $1::date
           AND ${SKU_FILTER_SQL}
       ),
       day_before AS (
         SELECT ${gmvExpr(ch.salesQtyKey)} AS gmv
         FROM ${SALES_DAILY_TABLE}
-        WHERE sales_date = (current_date - interval '2 day')::date
+        WHERE sales_date = ($1::date - interval '1 day')::date
           AND ${SKU_FILTER_SQL}
       )
       SELECT
@@ -40,7 +70,7 @@ async function detectSalesDropDoD(pool, anomalies) {
              ELSE NULL END AS change_pct
       FROM yesterday y, day_before d`;
 
-    const { rows } = await pool.query(sql);
+    const { rows } = await pool.query(sql, [anchorDate]);
     if (!rows.length) continue;
     const row = rows[0];
     if (row.change_pct === null) continue;
@@ -63,21 +93,21 @@ async function detectSalesDropDoD(pool, anomalies) {
 
 // ── Type 2: Week-over-Week sales drop per channel ───────────────────────────
 
-async function detectSalesDropWoW(pool, anomalies) {
+async function detectSalesDropWoW(pool, anomalies, anchorDate) {
   for (const ch of CHANNEL_DASHBOARD_OPTIONS) {
     const sql = `
       WITH this_week AS (
         SELECT ${gmvExpr(ch.salesQtyKey)} AS gmv
         FROM ${SALES_DAILY_TABLE}
-        WHERE sales_date BETWEEN (current_date - interval '7 day')::date
-                              AND (current_date - interval '1 day')::date
+        WHERE sales_date BETWEEN ($1::date - interval '6 day')::date
+                              AND $1::date
           AND ${SKU_FILTER_SQL}
       ),
       prev_week AS (
         SELECT ${gmvExpr(ch.salesQtyKey)} AS gmv
         FROM ${SALES_DAILY_TABLE}
-        WHERE sales_date BETWEEN (current_date - interval '14 day')::date
-                              AND (current_date - interval '8 day')::date
+        WHERE sales_date BETWEEN ($1::date - interval '13 day')::date
+                              AND ($1::date - interval '7 day')::date
           AND ${SKU_FILTER_SQL}
       )
       SELECT
@@ -88,7 +118,7 @@ async function detectSalesDropWoW(pool, anomalies) {
              ELSE NULL END AS change_pct
       FROM this_week t, prev_week p`;
 
-    const { rows } = await pool.query(sql);
+    const { rows } = await pool.query(sql, [anchorDate]);
     if (!rows.length) continue;
     const row = rows[0];
     if (row.change_pct === null) continue;
@@ -111,34 +141,30 @@ async function detectSalesDropWoW(pool, anomalies) {
 
 // ── Type 3: Zero-sales SKUs in last 7 days, grouped by category ─────────────
 
-async function detectZeroSalesSku(pool, anomalies) {
-  const salesSumExpr = CHANNEL_DASHBOARD_OPTIONS
-    .map((ch) => `coalesce(${ch.salesQtyKey}, 0)`)
-    .join(" + ");
+async function detectZeroSalesSku(pool, anomalies, anchorDate) {
+  const salesSumExpr = rowSalesQtyExpr();
 
   const sql = `
-    WITH recent_skus AS (
-      SELECT DISTINCT sku, coalesce(nullif(trim(category), ''), '未分类') AS cat
+    WITH sku_rollup AS (
+      SELECT
+        sku,
+        coalesce(nullif(max(trim(category)), ''), '未分类') AS category,
+        sum(CASE WHEN sales_date >= ($1::date - interval '6 day')::date
+                 THEN (${salesSumExpr})
+                 ELSE 0 END) AS last_7d_qty
       FROM ${SALES_DAILY_TABLE}
-      WHERE sales_date >= (current_date - interval '14 day')::date
-        AND ${SKU_FILTER_SQL}
-    ),
-    last_7d_sales AS (
-      SELECT sku, sum(${salesSumExpr}) AS total_qty
-      FROM ${SALES_DAILY_TABLE}
-      WHERE sales_date >= (current_date - interval '7 day')::date
+      WHERE sales_date BETWEEN ($1::date - interval '13 day')::date AND $1::date
         AND ${SKU_FILTER_SQL}
       GROUP BY sku
     )
-    SELECT rs.cat AS category, count(*) AS zero_count
-    FROM recent_skus rs
-    LEFT JOIN last_7d_sales s ON s.sku = rs.sku
-    WHERE coalesce(s.total_qty, 0) = 0
-    GROUP BY rs.cat
+    SELECT category, count(*) AS zero_count
+    FROM sku_rollup
+    WHERE coalesce(last_7d_qty, 0) = 0
+    GROUP BY category
     HAVING count(*) > 20
     ORDER BY count(*) DESC`;
 
-  const { rows } = await pool.query(sql);
+  const { rows } = await pool.query(sql, [anchorDate]);
   for (const row of rows) {
     anomalies.push({
       type: "zero_sales_sku",
@@ -155,28 +181,34 @@ async function detectZeroSalesSku(pool, anomalies) {
 
 // ── Type 4: New products with zero sales ────────────────────────────────────
 
-async function detectNewProductUnderperform(pool, anomalies) {
-  const salesSumExpr = CHANNEL_DASHBOARD_OPTIONS
-    .map((ch) => `coalesce(${ch.salesQtyKey}, 0)`)
-    .join(" + ");
+async function detectNewProductUnderperform(pool, anomalies, anchorDate) {
+  const salesSumExpr = rowSalesQtyExpr();
 
   const sql = `
-    WITH sku_first_seen AS (
-      SELECT sku, min(sales_date) AS first_date
-      FROM ${SALES_DAILY_TABLE}
-      WHERE ${SKU_FILTER_SQL}
-      GROUP BY sku
-      HAVING min(sales_date) >= (current_date - interval '14 day')::date
+    WITH recent_skus AS (
+      SELECT d.sku, min(d.sales_date) AS first_date
+      FROM ${SALES_DAILY_TABLE} d
+      WHERE d.sales_date BETWEEN ($1::date - interval '13 day')::date AND $1::date
+        AND ${skuFilterSql("d")}
+        AND NOT EXISTS (
+          SELECT 1
+            FROM ${SALES_DAILY_TABLE} old
+           WHERE old.sku = d.sku
+             AND old.sales_date < ($1::date - interval '13 day')::date
+           LIMIT 1
+        )
+      GROUP BY d.sku
     ),
     sku_total AS (
       SELECT d.sku,
              f.first_date,
-             (current_date - f.first_date)::int AS days_since,
+             ($1::date - f.first_date)::int AS days_since,
              sum(${salesSumExpr}) AS total_qty
       FROM ${SALES_DAILY_TABLE} d
-      JOIN sku_first_seen f ON f.sku = d.sku
+      JOIN recent_skus f ON f.sku = d.sku
       WHERE d.sales_date >= f.first_date
-        AND ${SKU_FILTER_SQL}
+        AND d.sales_date <= $1::date
+        AND ${skuFilterSql("d")}
       GROUP BY d.sku, f.first_date
     )
     SELECT
@@ -190,7 +222,7 @@ async function detectNewProductUnderperform(pool, anomalies) {
       CASE WHEN days_since > 7 THEN '7-14天' ELSE '0-7天' END
     ORDER BY severity DESC`;
 
-  const { rows } = await pool.query(sql);
+  const { rows } = await pool.query(sql, [anchorDate]);
   for (const row of rows) {
     anomalies.push({
       type: "new_product_underperform",
@@ -226,11 +258,16 @@ async function runInspection(pool) {
   }
 
   try {
+    const anchorDate = await getInspectionAnchorDate(pool);
+    if (!anchorDate) {
+      return { status: "skipped", reason: "no_sales_data", anomalies: [] };
+    }
+
     const rawAnomalies = [];
-    await detectSalesDropDoD(pool, rawAnomalies);
-    await detectSalesDropWoW(pool, rawAnomalies);
-    await detectZeroSalesSku(pool, rawAnomalies);
-    await detectNewProductUnderperform(pool, rawAnomalies);
+    await detectSalesDropDoD(pool, rawAnomalies, anchorDate);
+    await detectSalesDropWoW(pool, rawAnomalies, anchorDate);
+    await detectZeroSalesSku(pool, rawAnomalies, anchorDate);
+    await detectNewProductUnderperform(pool, rawAnomalies, anchorDate);
 
     // Apply learned suppressions
     const suppressions = require("./suppressions");
@@ -239,7 +276,7 @@ async function runInspection(pool) {
     const suppressed = rawAnomalies.length - anomalies.length;
 
     return {
-      run_date: new Date().toISOString().slice(0, 10),
+      run_date: anchorDate,
       anomaly_count: anomalies.length,
       suppressed_count: suppressed,
       summary: buildSummary(anomalies) + (suppressed ? ` (${suppressed} 个已抑制)` : ""),

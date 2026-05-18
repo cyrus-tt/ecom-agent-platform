@@ -48,6 +48,52 @@ export function dailyReportExportUrl({ dateFrom, dateTo }) {
   return `/api/report-daily/export.xlsb?dateFrom=${encodeURIComponent(dateFrom)}&dateTo=${encodeURIComponent(dateTo)}`;
 }
 
+/* ============ outlet-assortment ============ */
+
+export async function getOutletAssortmentDates() {
+  const resp = await http.get("/api/outlet-assortment/dates", { params: { _t: Date.now() } });
+  return resp.data;
+}
+
+/**
+ * GET /api/outlet-assortment/meta
+ * @param {{ dateFrom: string, dateTo: string }} params
+ */
+export async function getOutletAssortmentMeta({ dateFrom, dateTo }) {
+  const resp = await http.get("/api/outlet-assortment/meta", {
+    params: { dateFrom, dateTo, _t: Date.now() },
+  });
+  return resp.data;
+}
+
+/**
+ * GET /api/outlet-assortment/rows
+ * @param {{ dateFrom: string, dateTo: string, page?: number, pageSize?: number, keyword?: string }} params
+ */
+export async function getOutletAssortmentRows({ dateFrom, dateTo, page, pageSize, keyword }) {
+  const resp = await http.get("/api/outlet-assortment/rows", {
+    params: {
+      dateFrom,
+      dateTo,
+      page,
+      pageSize,
+      keyword: keyword || undefined,
+      fuzzy: keyword ? "1" : undefined,
+      _t: Date.now(),
+    },
+  });
+  return resp.data;
+}
+
+/**
+ * 拼奥莱货盘 XLSX 导出 URL（直接 window.open 用）
+ * @param {{ dateFrom: string, dateTo: string }} params
+ * @returns {string}
+ */
+export function outletAssortmentExportUrl({ dateFrom, dateTo }) {
+  return `/api/outlet-assortment/export.xlsx?dateFrom=${encodeURIComponent(dateFrom)}&dateTo=${encodeURIComponent(dateTo)}`;
+}
+
 /* ============ dashboard ============ */
 
 export async function getDashboardDates() {

@@ -78,6 +78,12 @@ create index if not exists idx_src_inventory_channel_map_pool
 create index if not exists idx_src_sales_channel_map_store
     on anta_daily.src_sales_channel_map (store_name);
 
+create index if not exists idx_src_inventory_channel_map_pool_norm
+    on anta_daily.src_inventory_channel_map (btrim(pool_name));
+
+create index if not exists idx_src_sales_channel_map_store_norm
+    on anta_daily.src_sales_channel_map (btrim(store_name));
+
 create table if not exists anta_daily.rpt_daily_sku_wide (
     sales_date date not null,
     style text,

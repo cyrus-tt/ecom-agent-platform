@@ -861,6 +861,13 @@ require("./routes/report").register(app, {
   excelExportLimiter: limitConcurrency(EXCEL_EXPORT_SEMAPHORE),
 });
 
+require("./routes/outlet-assortment").register(app, {
+  reportRepo,
+  parsePositiveInt,
+  stampNow,
+  excelExportLimiter: limitConcurrency(EXCEL_EXPORT_SEMAPHORE),
+});
+
 require("./routes/dashboard").register(app, {
   reportRepo,
   parsePositiveInt,
@@ -889,10 +896,25 @@ require("./routes/report-export").register(app, {
   excelExportLimiter: limitConcurrency(EXCEL_EXPORT_SEMAPHORE),
 });
 
+function createAsyncPoolAdapter(resolvePool) {
+  return {
+    async query(...args) {
+      const pool = await resolvePool();
+      return pool.query(...args);
+    },
+    async connect(...args) {
+      const pool = await resolvePool();
+      return pool.connect(...args);
+    },
+  };
+}
+
+const inspectionPool = createAsyncPoolAdapter(() => reportRepo.getPool());
+
 require("./routes/inspection").register(app, {
   express,
   parsePositiveInt,
-  getPool: () => reportRepo.getPool(),
+  getPool: () => inspectionPool,
 });
 
 require("./routes/arrival").register(app, {
@@ -1091,8 +1113,7 @@ function startServer() {
 
     try {
       const inspectionScheduler = require("./services/inspection");
-      const pool = reportRepo.getPool();
-      inspectionScheduler.start(pool, log);
+      inspectionScheduler.start(inspectionPool, log);
       log.info("[inspection] scheduler started");
     } catch (err) {
       if (err.code !== "MODULE_NOT_FOUND") {

@@ -49,6 +49,16 @@ const {
   getDailyExportRows,
   getDailyExportRowsRange,
 } = require("./daily");
+const {
+  OUTLET_ASSORTMENT_COLUMNS,
+  buildOutletAssortmentGroupHeaders,
+  getOutletAssortmentDateChoices,
+  resolveOutletAssortmentRange,
+  getOutletAssortmentMeta,
+  getOutletAssortmentRows,
+  getOutletAssortmentExportRows,
+  clearOutletAssortmentCache,
+} = require("./outletAssortment");
 
 function getCacheStats() {
   const dateChoiceStats = getDateChoiceCacheStats();
@@ -70,6 +80,7 @@ function clearReportCaches(reason = "manual") {
   const before = getCacheStats();
   clearReportCacheMaps();
   clearDateChoiceCaches();
+  clearOutletAssortmentCache();
   return {
     reason,
     cleared_at: new Date().toISOString(),
@@ -125,6 +136,13 @@ module.exports = {
   getDailyRowsRange,
   getDailyExportRows,
   getDailyExportRowsRange,
+  OUTLET_ASSORTMENT_COLUMNS,
+  buildOutletAssortmentGroupHeaders,
+  getOutletAssortmentDateChoices,
+  resolveOutletAssortmentRange,
+  getOutletAssortmentMeta,
+  getOutletAssortmentRows,
+  getOutletAssortmentExportRows,
   getChannelDashboardAvailableChannels,
   getAvailableCategories,
   getCacheStats,

@@ -20,6 +20,7 @@ const AUTH_PERMISSION_MODULES = [
   { key: "channel_dashboard", label: "渠道", route: "/channel-dashboard", description: "渠道店铺看板" },
   { key: "analysis", label: "分析", route: "/analysis", description: "AI 经营分析与历史报告" },
   { key: "bi", label: "ChatBI", route: "/bi", description: "AI 生成 SQL + 拖拽透视表" },
+  { key: "agent_dashboard", label: "操控台", route: "/agent-dashboard", description: "Agent 操控台：每日巡检简报、异常清单、活动时间线" },
   ...(dispatchModule.isEnabled() ? [dispatchModule.PERMISSION_MODULE] : []),
   ...(toolsModule.isEnabled() ? [toolsModule.PERMISSION_MODULE] : []),
 ];
@@ -87,6 +88,9 @@ function isRouteAllowedForAccount(account, pathname) {
   if (routePath === "/report" || routePath.startsWith("/report-daily")) {
     return accountHasPermission(account, "report_daily");
   }
+  if (routePath.startsWith("/outlet-assortment")) {
+    return accountHasPermission(account, "report_daily");
+  }
   if (routePath.startsWith("/arrival")) {
     return accountHasPermission(account, "arrival");
   }
@@ -101,6 +105,9 @@ function isRouteAllowedForAccount(account, pathname) {
   }
   if (routePath.startsWith("/bi")) {
     return accountHasPermission(account, "bi");
+  }
+  if (routePath.startsWith("/agent-dashboard")) {
+    return accountHasPermission(account, "agent_dashboard");
   }
   if (routePath.startsWith("/dispatch")) {
     return accountHasPermission(account, "dispatch");
