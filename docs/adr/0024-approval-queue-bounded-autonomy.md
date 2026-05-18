@@ -1,7 +1,7 @@
 # ADR-0024: Approval Queue — Bounded Autonomy
 
-**Status:** accepted  
-**Date:** 2026-05-16  
+**Status:** accepted
+**Date:** 2026-05-16
 **Deciders:** Claude (autonomous session), pending Cyrus review
 
 ## Context
